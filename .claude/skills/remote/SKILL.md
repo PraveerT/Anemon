@@ -68,9 +68,43 @@ jlab cat config.yaml                   # looks for /notebooks/config.yaml, not /
 
 - GPU: NVIDIA RTX A6000 (49 GB VRAM), Free-A6000 tier
 - Session cwd: /notebooks/PMamba (after setup)
-- Projects in `/notebooks/`: PMamba, REQNN, paper, research, viz-qcc
 - Python 3.11, PyTorch 2.1.1+cu121, CUDA 12.4
 - `jlab exec` and `jlab run` reuse the session kernel (fast, ~1s per command)
+
+## PMamba project structure (session cwd)
+
+```
+/notebooks/PMamba/
+  startup.sh                          # run by jlab setup
+  requirements.txt
+  dataset/
+    nvidia_dataset_split.py           # data loading/splitting
+    nvidia_process.py                 # preprocessing
+    utils.py
+  experiments/
+    main.py                           # training entry point
+    oracle_analysis.py                # oracle + fusion analysis
+    fusion.yaml                       # fusion config
+    quaternion.yaml                   # quaternion branch config
+    pointlstm.yaml                    # PMamba config
+    nvidia_dataloader.py              # dataloader
+    nvidia_dataset_stats.npy          # precomputed stats
+    models/
+      motion.py                       # PMamba motion model
+      reqnn_motion.py                 # quaternion motion model
+      fusion.py                       # fusion model
+      op.py                           # operators
+    utils/
+      optimizer.py, parameters.py, pts_transform.py, record.py, tools.py, ...
+    work_dir/
+      pmamba_branch/                  # trained PMamba (best: 89.83%)
+      quaternion_branch/              # trained quaternion (best: 80.29%)
+      fusion_branch/                  # trained fusion (best: 90.25%)
+  external/REQNN/                     # reference REQNN implementation
+  third_party/qecnetworks/           # quaternion equivariant networks
+```
+
+Other projects in `/notebooks/`: REQNN, paper, research, viz-qcc
 
 ## Important
 
