@@ -86,7 +86,14 @@ class KernelConnection:
             except websocket.WebSocketTimeoutException:
                 break
 
-            reply = json.loads(raw)
+            # Skip binary frames
+            if isinstance(raw, bytes):
+                continue
+
+            try:
+                reply = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                continue
             parent_msg_id = reply.get("parent_header", {}).get("msg_id")
             if parent_msg_id != msg_id:
                 continue
@@ -128,6 +135,133 @@ class KernelConnection:
                     pass
 
         raise KernelError("Execution timed out")
+
+    def execute_streaming(self, code: str, timeout: float = 120.0) -> ExecutionResult:
+        """Execute code and print stream output in real-time as it arrives."""
+        if not self._ws:
+            raise KernelError("Not connected to kernel")
+
+        msg = self._make_execute_request(code)
+        msg_id = msg["header"]["msg_id"]
+        self._ws.send(json.dumps(msg))
+
+        result = ExecutionResult(status="ok")
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            self._ws.settimeout(remaining)
+            try:
+                raw = self._ws.recv()
+            except websocket.WebSocketTimeoutException:
+                break
+
+            if isinstance(raw, bytes):
+                continue
+
+            try:
+                reply = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            parent_msg_id = reply.get("parent_header", {}).get("msg_id")
+            if parent_msg_id != msg_id:
+                continue
+
+            msg_type = reply["header"]["msg_type"]
+            content = reply.get("content", {})
+
+            match msg_type:
+                case "stream":
+                    # Print immediately instead of collecting
+                    import sys
+                    text = content["text"]
+                    if content["name"] == "stderr":
+                        sys.stderr.write(text)
+                        sys.stderr.flush()
+                    else:
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+                    result.outputs.append({
+                        "type": "stream",
+                        "name": content["name"],
+                        "text": text,
+                    })
+                case "execute_result":
+                    result.execution_count = content.get("execution_count", 0)
+                    result.outputs.append({
+                        "type": "execute_result",
+                        "data": content["data"],
+                    })
+                case "display_data":
+                    result.outputs.append({
+                        "type": "display_data",
+                        "data": content["data"],
+                    })
+                case "error":
+                    result.status = "error"
+                    result.error_name = content["ename"]
+                    result.error_value = content["evalue"]
+                    result.traceback = content.get("traceback", [])
+                case "execute_reply":
+                    result.status = content["status"]
+                    if content["status"] == "error":
+                        result.error_name = content.get("ename", "")
+                        result.error_value = content.get("evalue", "")
+                        result.traceback = content.get("traceback", [])
+                    return result
+                case "status":
+                    pass
+
+        raise KernelError("Execution timed out")
+
+    def complete(self, code: str, cursor_pos: int) -> list[str]:
+        """Request tab completions from the kernel."""
+        if not self._ws:
+            return []
+
+        header = self._make_header("complete_request")
+        msg = {
+            "header": header,
+            "parent_header": {},
+            "metadata": {},
+            "content": {
+                "code": code,
+                "cursor_pos": cursor_pos,
+            },
+            "channel": "shell",
+        }
+        msg_id = header["msg_id"]
+        self._ws.send(json.dumps(msg))
+
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            self._ws.settimeout(remaining)
+            try:
+                raw = self._ws.recv()
+            except websocket.WebSocketTimeoutException:
+                break
+
+            if isinstance(raw, bytes):
+                continue
+            try:
+                reply = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            parent_msg_id = reply.get("parent_header", {}).get("msg_id")
+            if parent_msg_id != msg_id:
+                continue
+
+            if reply["header"]["msg_type"] == "complete_reply":
+                return reply["content"].get("matches", [])
+
+        return []
 
     def repl(self, display) -> None:
         display.print_info("Connected to remote kernel. Type 'exit()' or Ctrl+D to quit.")

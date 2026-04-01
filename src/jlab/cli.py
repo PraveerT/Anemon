@@ -177,6 +177,10 @@ def repl(kernel: str | None):
 @handle_errors
 def shell():
     """Open a remote shell via Python kernel (like SSH)."""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.formatted_text import ANSI
+
     config = load_config()
     client = JupyterClient(config)
     kernel_name = config.default_kernel
@@ -186,8 +190,8 @@ def shell():
     conn = KernelConnection(config, kernel_info.id)
     try:
         conn.connect()
-        # Set up the kernel to run shell commands and get cwd
-        conn.execute("import subprocess, os", timeout=10)
+        # Set up the kernel with helpers
+        conn.execute("import subprocess, os, glob", timeout=10)
         result = conn.execute("os.getcwd()", timeout=10)
         cwd = ""
         for out in result.outputs:
@@ -196,11 +200,47 @@ def shell():
         if not cwd:
             cwd = "~"
 
+        # Tab completer that queries remote filesystem
+        class RemoteCompleter(Completer):
+            def get_completions(self, document, complete_event):
+                text = document.text_before_cursor
+                parts = text.split()
+                word = parts[-1] if parts and not text.endswith(" ") else ""
+
+                # Always complete against files/directories first
+                code = (
+                    f"import os as _os\n"
+                    f"_w = {word!r}\n"
+                    f"_dir = _os.path.dirname(_w) or '.'\n"
+                    f"_pre = _os.path.basename(_w)\n"
+                    f"_pfx = _os.path.dirname(_w)\n"
+                    f"try:\n"
+                    f"  _items = _os.listdir(_os.path.join({cwd!r}, _dir))\n"
+                    f"  for _i in sorted(_items):\n"
+                    f"    if _i.startswith(_pre):\n"
+                    f"      _full = (_pfx + '/' + _i) if _pfx else _i\n"
+                    f"      if _os.path.isdir(_os.path.join({cwd!r}, _dir, _i)): _full += '/'\n"
+                    f"      print(_full)\n"
+                    f"except: pass"
+                )
+                try:
+                    r = conn.execute(code, timeout=5)
+                    for out in r.outputs:
+                        if out["type"] == "stream" and out["name"] == "stdout":
+                            for match in out["text"].strip().split("\n"):
+                                match = match.strip()
+                                if match:
+                                    yield Completion(match, start_position=-len(word))
+                except Exception:
+                    pass
+
+        session = PromptSession(completer=RemoteCompleter(), complete_while_typing=False)
         display.print_info(f"Connected to remote shell. Type 'exit' or Ctrl+D to quit.\n")
 
         while True:
             try:
-                cmd = input(f"\033[1;32mremote\033[0m:\033[1;34m{cwd}\033[0m$ ")
+                prompt_text = ANSI(f"\033[1;32mremote\033[0m:\033[1;34m{cwd}\033[0m$ ")
+                cmd = session.prompt(prompt_text)
             except (EOFError, KeyboardInterrupt):
                 display.print_info("\nDisconnecting.")
                 break
@@ -211,7 +251,11 @@ def shell():
             if cmd == "exit":
                 break
 
-            # Handle cd specially
+            # Handle builtins locally
+            if cmd == "clear":
+                click.clear()
+                continue
+
             if cmd == "cd" or cmd.startswith("cd "):
                 path = cmd[3:].strip() or "~"
                 code = (
@@ -227,17 +271,15 @@ def shell():
                         display.console.print(line)
                 continue
 
-            # Run shell command via subprocess
+            # Run shell command with real-time streaming via Popen
             code = (
-                f"_r = subprocess.run({cmd!r}, shell=True, capture_output=True, text=True, cwd={cwd!r})\n"
-                f"if _r.stdout: print(_r.stdout, end='')\n"
-                f"if _r.stderr: print(_r.stderr, end='')"
+                f"import subprocess, sys\n"
+                f"_p = subprocess.Popen({cmd!r}, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd={cwd!r}, bufsize=1)\n"
+                f"for _line in _p.stdout:\n"
+                f"    print(_line, end='', flush=True)\n"
+                f"_p.wait()"
             )
-            result = conn.execute(code, timeout=120)
-            for out in result.outputs:
-                if out["type"] == "stream":
-                    sys.stdout.write(out["text"])
-                    sys.stdout.flush()
+            result = conn.execute_streaming(code, timeout=600)
             if result.status == "error" and result.traceback:
                 for line in result.traceback:
                     display.console.print(line)
