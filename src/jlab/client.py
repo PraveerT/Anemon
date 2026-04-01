@@ -1,8 +1,11 @@
 import base64
 import json
+import urllib3
 from pathlib import Path
 
 import requests
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from jlab.config import JlabConfig
 from jlab.exceptions import AuthenticationError, ConnectionError, NotFoundError
@@ -14,6 +17,15 @@ class JupyterClient:
         self.config = config
         self._session = requests.Session()
         self._session.headers.update(config.auth_headers)
+        # Fetch cookies (including _xsrf) from the server
+        try:
+            self._session.get(config.url, verify=False)
+        except Exception:
+            pass
+
+    @property
+    def cookies(self) -> dict[str, str]:
+        return dict(self._session.cookies)
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         url = f"{self.config.api_url}/{path.lstrip('/')}"

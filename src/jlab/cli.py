@@ -4,14 +4,27 @@ from pathlib import Path
 
 import click
 
-from jlab.config import JlabConfig, load_config, save_config
+from jlab.config import (
+    JlabConfig, load_config, save_config,
+    load_session, save_session, clear_session,
+)
 from jlab.client import JupyterClient
 from jlab.display import DisplayFormatter
 from jlab.exceptions import JlabError
 from jlab.kernel import KernelConnection
 from jlab.notebook import run_notebook
+from jlab.terminal import TerminalConnection, _get_browser_cookies_and_headers
 
 display = DisplayFormatter()
+
+
+def _fix_remote_path(path: str) -> str:
+    """Fix Git Bash path mangling. Git Bash converts /notebooks to
+    C:/Users/.../Git/notebooks. Detect and strip the prefix."""
+    if ":" in path and "/notebooks" in path:
+        idx = path.find("/notebooks")
+        return path[idx:]
+    return path
 
 
 def handle_errors(f):
@@ -31,6 +44,30 @@ def handle_errors(f):
 def get_client() -> JupyterClient:
     config = load_config()
     return JupyterClient(config)
+
+
+def _get_session_conn(config, client):
+    """Get a kernel connection from an active session, or None."""
+    session = load_session()
+    if not session:
+        return None, None
+
+    kernel_id = session["kernel_id"]
+    cwd = session.get("cwd", "/notebooks")
+
+    # Check if the kernel is still alive
+    try:
+        kernels = client.list_kernels()
+        if not any(k.id == kernel_id for k in kernels):
+            clear_session()
+            return None, None
+    except Exception:
+        clear_session()
+        return None, None
+
+    conn = KernelConnection(config, kernel_id)
+    conn.connect()
+    return conn, cwd
 
 
 @click.group()
@@ -136,23 +173,239 @@ def kernels():
 @click.option("--kernel", "-k", default=None, help="Kernel name to use")
 @handle_errors
 def run(code: str, kernel: str | None):
-    """Execute code on a remote kernel (one-shot)."""
+    """Execute Python code on a remote kernel (one-shot)."""
     config = load_config()
     client = JupyterClient(config)
-    kernel_name = kernel or config.default_kernel
-    kernel_info = client.start_kernel(kernel_name)
 
-    conn = KernelConnection(config, kernel_info.id)
-    try:
+    # Try to use active session
+    conn, _ = _get_session_conn(config, client)
+    owns_kernel = False
+
+    if not conn:
+        kernel_name = kernel or config.default_kernel
+        kernel_info = client.start_kernel(kernel_name)
+        conn = KernelConnection(config, kernel_info.id)
         conn.connect()
+        owns_kernel = True
+
+    try:
         result = conn.execute(code)
         display.print_execution_result(result, 1)
         if result.status == "error":
             sys.exit(1)
     finally:
         conn.close()
-        client.delete_kernel(kernel_info.id)
+        if owns_kernel:
+            client.delete_kernel(kernel_info.id)
 
+
+@main.command(name="exec")
+@click.argument("command")
+@click.option("--cwd", default=None, help="Working directory on remote")
+@handle_errors
+def exec_cmd(command: str, cwd: str | None):
+    """Run a shell command on the remote machine."""
+    if cwd:
+        cwd = _fix_remote_path(cwd)
+    config = load_config()
+    client = JupyterClient(config)
+
+    # Try to use active session
+    conn, session_cwd = _get_session_conn(config, client)
+    owns_kernel = False
+
+    if not conn:
+        kernel_info = client.start_kernel(config.default_kernel)
+        conn = KernelConnection(config, kernel_info.id)
+        conn.connect()
+        conn.execute("import subprocess, os", timeout=10)
+        owns_kernel = True
+        session_cwd = None
+
+    try:
+        # Use explicit --cwd, or session cwd, or let subprocess use default
+        effective_cwd = cwd or session_cwd
+        cwd_arg = f", cwd={effective_cwd!r}" if effective_cwd else ""
+        code = (
+            f"import subprocess as _sp\n"
+            f"_r = _sp.run({command!r}, shell=True, capture_output=True, text=True{cwd_arg})\n"
+            f"if _r.stdout: print(_r.stdout, end='')\n"
+            f"if _r.stderr: print(_r.stderr, end='')"
+        )
+        result = conn.execute_streaming(code, timeout=600)
+        if result.status == "error" and result.traceback:
+            for line in result.traceback:
+                display.console.print(line)
+            sys.exit(1)
+    finally:
+        conn.close()
+        if owns_kernel:
+            client.delete_kernel(kernel_info.id)
+
+
+# --- Session management ---
+
+@main.group()
+def session():
+    """Manage persistent kernel sessions."""
+    pass
+
+
+@session.command("start")
+@click.option("--kernel", "-k", default=None, help="Kernel name to use")
+@click.option("--cwd", default="/notebooks", help="Initial working directory")
+@handle_errors
+def session_start(kernel: str | None, cwd: str):
+    """Start a persistent kernel session."""
+    cwd = _fix_remote_path(cwd)
+    config = load_config()
+    client = JupyterClient(config)
+
+    # Check if a session already exists
+    existing = load_session()
+    if existing:
+        try:
+            kernels = client.list_kernels()
+            if any(k.id == existing["kernel_id"] for k in kernels):
+                display.print_info(f"Session already active (kernel: {existing['kernel_id'][:12]}...)")
+                return
+        except Exception:
+            pass
+        clear_session()
+
+    kernel_name = kernel or config.default_kernel
+    kernel_info = client.start_kernel(kernel_name)
+
+    # Initialize the kernel
+    conn = KernelConnection(config, kernel_info.id)
+    conn.connect()
+    conn.execute("import subprocess, os", timeout=10)
+    if cwd:
+        conn.execute(f"os.chdir({cwd!r})", timeout=10)
+    conn.close()
+
+    save_session(kernel_info.id, cwd)
+    display.print_success(f"Session started (kernel: {kernel_info.id[:12]}..., cwd: {cwd})")
+
+
+@session.command("stop")
+@handle_errors
+def session_stop():
+    """Stop the persistent kernel session."""
+    config = load_config()
+    client = JupyterClient(config)
+
+    session_data = load_session()
+    if not session_data:
+        display.print_info("No active session")
+        return
+
+    try:
+        client.delete_kernel(session_data["kernel_id"])
+    except Exception:
+        pass
+
+    clear_session()
+    display.print_success("Session stopped")
+
+
+@session.command("status")
+@handle_errors
+def session_status():
+    """Check if a session is active."""
+    config = load_config()
+    client = JupyterClient(config)
+
+    session_data = load_session()
+    if not session_data:
+        display.print_info("No active session. Run 'jlab session start' to create one.")
+        return
+
+    kernel_id = session_data["kernel_id"]
+    try:
+        kernels = client.list_kernels()
+        alive = any(k.id == kernel_id for k in kernels)
+    except Exception:
+        alive = False
+
+    if alive:
+        display.print_success(f"Session active (kernel: {kernel_id[:12]}..., cwd: {session_data.get('cwd', '?')})")
+    else:
+        clear_session()
+        display.print_info("Session expired (kernel no longer running). Run 'jlab session start' to create a new one.")
+
+
+@session.command("cd")
+@click.argument("path")
+@handle_errors
+def session_cd(path: str):
+    """Change the session working directory."""
+    path = _fix_remote_path(path)
+    config = load_config()
+    client = JupyterClient(config)
+
+    conn, _ = _get_session_conn(config, client)
+    if not conn:
+        display.print_error("No active session. Run 'jlab session start' first.")
+        sys.exit(1)
+
+    try:
+        code = f"os.chdir(os.path.expanduser({path!r}))\nprint(os.getcwd())"
+        result = conn.execute(code, timeout=10)
+        new_cwd = ""
+        for out in result.outputs:
+            if out["type"] == "stream" and out["name"] == "stdout":
+                new_cwd = out["text"].strip()
+        if new_cwd:
+            session_data = load_session()
+            save_session(session_data["kernel_id"], new_cwd)
+            display.print_success(f"cwd: {new_cwd}")
+        if result.status == "error" and result.traceback:
+            for line in result.traceback:
+                display.console.print(line)
+    finally:
+        conn.close()
+
+
+# --- Find command ---
+
+@main.command()
+@click.argument("pattern")
+@click.option("--path", "-p", default="/notebooks", help="Directory to search in")
+@handle_errors
+def find(pattern: str, path: str):
+    """Find files on the remote machine by name pattern."""
+    config = load_config()
+    client = JupyterClient(config)
+
+    conn, _ = _get_session_conn(config, client)
+    owns_kernel = False
+
+    if not conn:
+        kernel_info = client.start_kernel(config.default_kernel)
+        conn = KernelConnection(config, kernel_info.id)
+        conn.connect()
+        owns_kernel = True
+
+    try:
+        code = (
+            f"import subprocess as _sp\n"
+            f"_r = _sp.run(['find', {path!r}, '-name', {pattern!r}, '-type', 'f'], "
+            f"capture_output=True, text=True, timeout=30)\n"
+            f"if _r.stdout: print(_r.stdout, end='')\n"
+            f"if _r.stderr: print(_r.stderr, end='')"
+        )
+        result = conn.execute_streaming(code, timeout=60)
+        if result.status == "error" and result.traceback:
+            for line in result.traceback:
+                display.console.print(line)
+    finally:
+        conn.close()
+        if owns_kernel:
+            client.delete_kernel(kernel_info.id)
+
+
+# --- Interactive shell ---
 
 @main.command()
 @click.option("--kernel", "-k", default=None, help="Kernel name to use")
@@ -173,24 +426,43 @@ def repl(kernel: str | None):
         client.delete_kernel(kernel_info.id)
 
 
-@main.command()
-@handle_errors
-def shell():
-    """Open a remote shell via Python kernel (like SSH)."""
+def _shell_pty(config, client, display):
+    """Real PTY shell via JupyterLab terminals WebSocket."""
+    try:
+        resp = client._request("GET", "terminals")
+        for t in resp.json():
+            client.delete_terminal(t["name"])
+    except Exception:
+        pass
+
+    term = client.create_terminal()
+    term_name = term["name"]
+    display.print_info(f"Connected to remote terminal (pty:{term_name}). Press Ctrl+D to disconnect.\n")
+
+    conn = TerminalConnection(config, term_name)
+    try:
+        conn.connect()
+        conn.interactive()
+    finally:
+        conn.close()
+        try:
+            client.delete_terminal(term_name)
+        except Exception:
+            pass
+
+
+def _shell_kernel(config, client, display):
+    """Fallback shell via Python kernel + subprocess."""
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import ANSI
 
-    config = load_config()
-    client = JupyterClient(config)
     kernel_name = config.default_kernel
-    display.print_info("Starting remote shell...")
     kernel_info = client.start_kernel(kernel_name)
 
     conn = KernelConnection(config, kernel_info.id)
     try:
         conn.connect()
-        # Set up the kernel with helpers
         conn.execute("import subprocess, os, glob", timeout=10)
         result = conn.execute("os.getcwd()", timeout=10)
         cwd = ""
@@ -200,14 +472,12 @@ def shell():
         if not cwd:
             cwd = "~"
 
-        # Tab completer that queries remote filesystem
         class RemoteCompleter(Completer):
             def get_completions(self, document, complete_event):
                 text = document.text_before_cursor
                 parts = text.split()
                 word = parts[-1] if parts and not text.endswith(" ") else ""
 
-                # Always complete against files/directories first
                 code = (
                     f"import os as _os\n"
                     f"_w = {word!r}\n"
@@ -235,7 +505,7 @@ def shell():
                     pass
 
         session = PromptSession(completer=RemoteCompleter(), complete_while_typing=False)
-        display.print_info(f"Connected to remote shell. Type 'exit' or Ctrl+D to quit.\n")
+        display.print_info(f"Connected to remote shell (kernel mode). Type 'exit' or Ctrl+D to quit.\n")
 
         while True:
             try:
@@ -251,7 +521,6 @@ def shell():
             if cmd == "exit":
                 break
 
-            # Handle builtins locally
             if cmd == "clear":
                 click.clear()
                 continue
@@ -271,7 +540,6 @@ def shell():
                         display.console.print(line)
                 continue
 
-            # Run shell command with real-time streaming via Popen
             code = (
                 f"import subprocess, sys\n"
                 f"_p = subprocess.Popen({cmd!r}, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd={cwd!r}, bufsize=1)\n"
@@ -290,6 +558,32 @@ def shell():
             client.delete_kernel(kernel_info.id)
         except Exception:
             pass
+
+
+@main.command()
+@click.option("--mode", type=click.Choice(["auto", "pty", "kernel"]), default="auto",
+              help="Shell mode: pty (real terminal), kernel (subprocess), auto (try pty first)")
+@handle_errors
+def shell(mode: str):
+    """Open an interactive remote shell (like SSH)."""
+    config = load_config()
+    client = JupyterClient(config)
+
+    if mode == "kernel":
+        _shell_kernel(config, client, display)
+        return
+
+    if mode == "pty":
+        _shell_pty(config, client, display)
+        return
+
+    # Auto mode: try PTY first, fall back to kernel
+    try:
+        display.print_info("Connecting to remote terminal...")
+        _shell_pty(config, client, display)
+    except Exception as e:
+        display.print_info(f"PTY terminal unavailable ({e}), falling back to kernel mode...")
+        _shell_kernel(config, client, display)
 
 
 # --- Notebook subgroup ---
