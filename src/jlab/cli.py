@@ -172,12 +172,30 @@ def _setup_session(config, client):
     conn = KernelConnection(config, kernel_info.id)
     conn.connect()
     conn.execute("import subprocess, os", timeout=10)
-    cwd = "/notebooks"
+    cwd = "/notebooks/PMamba"
     conn.execute(f"os.chdir({cwd!r})", timeout=10)
     conn.close()
 
     save_session(kernel_info.id, cwd)
     display.print_success(f"Session started (kernel: {kernel_info.id[:12]}..., cwd: {cwd})")
+
+    # Run startup script
+    display.print_info("Running startup.sh...")
+    conn = KernelConnection(config, kernel_info.id)
+    conn.connect()
+    code = (
+        "import subprocess as _sp\n"
+        "_r = _sp.run('bash ./startup.sh', shell=True, capture_output=True, text=True, cwd='/notebooks/PMamba')\n"
+        "if _r.stdout: print(_r.stdout, end='')\n"
+        "if _r.stderr: print(_r.stderr, end='')"
+    )
+    result = conn.execute_streaming(code, timeout=600)
+    conn.close()
+    if result.status == "error" and result.traceback:
+        for line in result.traceback:
+            display.console.print(line)
+    else:
+        display.print_success("startup.sh completed")
 
 
 @main.command()
