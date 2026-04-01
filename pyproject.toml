@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jlab"
+version = "0.1.0"
+description = "CLI tool for interacting with remote JupyterLab instances"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1",
+    "requests>=2.31",
+    "websocket-client>=1.7",
+    "rich>=13.7",
+]
+
+[project.scripts]
+jlab = "jlab.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jlab"]
