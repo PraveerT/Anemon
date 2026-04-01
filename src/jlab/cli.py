@@ -7,6 +7,7 @@ import click
 from jlab.config import (
     JlabConfig, load_config, save_config,
     load_session, save_session, clear_session,
+    load_ps_api_key, save_ps_api_key, fetch_running_notebook,
 )
 from jlab.client import JupyterClient
 from jlab.display import DisplayFormatter
@@ -93,17 +94,25 @@ def connect(url: str, token: str, kernel: str):
 
 
 @main.command()
-@click.option("--url", default=None, help="Server URL (uses saved config if omitted)")
+@click.option("--key", default=None, help="Paperspace API key (saved for future use)")
 @handle_errors
-def setup(url: str | None):
+def setup(key: str | None):
     """Auto-connect and start a session.
 
-    Uses saved config to reconnect. If the token has changed (machine recreated),
-    reads the new token from /notebooks/.jlab-token on the remote.
+    Uses saved Paperspace API key to find the running notebook, get its
+    URL and token, connect, and start a persistent kernel session.
+
+    First time:  jlab setup --key <paperspace-api-key>
+    After that:  jlab setup
     """
     from jlab.config import CONFIG_FILE
 
-    # Step 1: Get URL from arg, or saved config
+    # Step 1: Get Paperspace API key
+    if key:
+        save_ps_api_key(key)
+    api_key = key or load_ps_api_key()
+
+    # Step 2: Try saved config first (fast path)
     saved_config = None
     if CONFIG_FILE.exists():
         try:
@@ -111,40 +120,43 @@ def setup(url: str | None):
         except Exception:
             pass
 
-    server_url = url or (saved_config.url if saved_config else None)
-    if not server_url:
-        display.print_error("No saved config. Run 'jlab connect <url> --token <token>' first.")
+    if saved_config:
+        client = JupyterClient(saved_config)
+        try:
+            client.status()
+            config = saved_config
+            display.print_success(f"Connected to {config.url}")
+            # Skip to session start
+            return _setup_session(config, client)
+        except Exception:
+            pass
+
+    # Step 3: Saved config failed — use Paperspace API
+    if not api_key:
+        display.print_error(
+            "No Paperspace API key. Run:\n"
+            "  jlab setup --key <your-paperspace-api-key>\n"
+            "Or connect manually:\n"
+            "  jlab connect <url> --token <token>"
+        )
         sys.exit(1)
 
-    # Step 2: Try connecting with saved token
-    token = saved_config.token if saved_config else ""
-    config = JlabConfig(url=server_url.rstrip("/"), token=token)
+    display.print_info("Fetching notebook info from Paperspace...")
+    nb = fetch_running_notebook(api_key)
+    if not nb:
+        display.print_error("No running notebook found on Paperspace.")
+        sys.exit(1)
+
+    config = JlabConfig(url=nb["url"], token=nb["token"])
     client = JupyterClient(config)
-
-    try:
-        client.status()
-        display.print_success(f"Connected to {server_url}")
-    except Exception:
-        # Saved token failed — try reading .jlab-token with saved token via REST
-        display.print_info("Saved token failed, trying to read .jlab-token from remote...")
-        try:
-            content, _ = client.download_file(".jlab-token")
-            new_token = content.strip() if isinstance(content, str) else content.decode().strip()
-            config = JlabConfig(url=server_url.rstrip("/"), token=new_token)
-            client = JupyterClient(config)
-            client.status()
-            save_config(config)
-            display.print_success(f"Reconnected with fresh token")
-        except Exception:
-            display.print_error(
-                "Cannot connect. The token may have changed.\n"
-                "Run: jlab connect <url> --token <token>"
-            )
-            sys.exit(1)
-
+    client.status()
     save_config(config)
+    display.print_success(f"Connected to {nb['url']} ({nb['name']})")
+    _setup_session(config, client)
 
-    # Step 3: Start session if not already active
+
+def _setup_session(config, client):
+    """Start a session if not already active."""
     session = load_session()
     if session:
         try:
