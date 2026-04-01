@@ -11,11 +11,9 @@ Auto-connect to the remote Paperspace Gradient GPU server and execute commands.
 
 ## Setup (auto-connect)
 
-Run this first to connect and start a session automatically:
+Run this first — it handles everything (starts notebook if stopped, connects, starts session, runs startup.sh):
 
 !`jlab setup 2>&1`
-
-This reuses saved credentials, refreshes the token from `/notebooks/.jlab-token` if needed, and starts a persistent kernel session.
 
 ## If arguments were provided
 
@@ -40,7 +38,10 @@ Same for Python: `jlab run "import torch" "print(torch.cuda.is_available())"`
 ## Available commands
 
 ```bash
-jlab exec "cmd1" "cmd2" "cmd3"        # batch shell commands (single connection)
+jlab setup                             # auto-connect (starts notebook if needed)
+jlab start                             # start the notebook (Free-A6000)
+jlab stop                              # stop the notebook
+jlab exec "cmd1" "cmd2" "cmd3"         # batch shell commands (single connection)
 jlab run "code1" "code2"               # batch Python code (single connection)
 jlab session cd /notebooks/PMamba      # change working directory
 jlab find "filename"                   # find files by name
@@ -53,9 +54,9 @@ jlab nb run notebook.ipynb             # run notebook
 
 ## Remote machine info
 
-- GPU server on Paperspace Gradient
+- GPU: NVIDIA RTX A6000 (49 GB VRAM), Free-A6000 tier
 - Projects in `/notebooks/`: PMamba, REQNN, paper, research, viz-qcc
-- Python 3.11, PyTorch 2.1.1+cu121, CUDA
+- Python 3.11, PyTorch 2.1.1+cu121, CUDA 12.4
 - `jlab exec` and `jlab run` reuse the session kernel (fast, ~1s per command)
 - `jlab ls` and `jlab cat` use REST API (always fast)
 
@@ -64,4 +65,4 @@ jlab nb run notebook.ipynb             # run notebook
 - Always use `jlab exec` for shell commands, NOT `jlab shell`
 - **Batch commands** — put multiple commands in one `jlab exec` call to save time
 - Session persists across calls — `session cd` changes cwd for all subsequent `exec` calls
-- Run `jlab session stop` when completely done
+- Use `jlab stop` when completely done to free the GPU
