@@ -79,7 +79,7 @@ def load_ps_api_key() -> str | None:
 
 def fetch_running_notebook(api_key: str) -> dict | None:
     """Query Paperspace API for a running Gradient notebook.
-    Returns {"url": ..., "token": ...} or None."""
+    Returns {"url": ..., "token": ..., "id": ..., "name": ...} or None."""
     import requests
     resp = requests.get(
         "https://api.paperspace.com/v1/notebooks",
@@ -93,6 +93,57 @@ def fetch_running_notebook(api_key: str) -> dict | None:
             return {
                 "url": f"https://{nb['fqdn']}",
                 "token": nb["token"],
+                "id": nb["id"],
                 "name": nb.get("name", ""),
+                "projectId": nb.get("projectId", ""),
             }
     return None
+
+
+# Default container and project for starting notebooks
+PS_LEGACY_API = "https://api.paperspace.io/notebooks/v2"
+PS_DEFAULT_CONTAINER = "nvcr.io/nvidia/pytorch:23.10-py3"
+
+
+PS_NOTEBOOK_ID = "nfjbqnsvpx"
+PS_PROJECT_ID = "pitgq1c6bcy"
+
+
+def ps_start_notebook(api_key: str) -> dict:
+    """Start notebook nfjbqnsvpx with Free-A6000. Fails if unavailable."""
+    import requests
+    resp = requests.post(
+        f"{PS_LEGACY_API}/createNotebook",
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+        json={
+            "machineType": "Free-A6000",
+            "projectId": PS_PROJECT_ID,
+            "name": "PMamba",
+            "container": PS_DEFAULT_CONTAINER,
+            "shutdownTimeout": 6,
+        },
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise ConfigError(f"Failed to start notebook: {resp.text[:200]}")
+    data = resp.json()
+    return {
+        "id": data["handle"],
+        "url": f"https://{data['fqdn']}",
+        "token": data["token"],
+        "state": data.get("state", "Pending"),
+    }
+
+
+def ps_stop_notebook(api_key: str) -> None:
+    """Stop the running notebook."""
+    import requests
+    nb = fetch_running_notebook(api_key)
+    if not nb:
+        return
+    requests.post(
+        f"{PS_LEGACY_API}/stopNotebook",
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+        json={"notebookId": nb["id"]},
+        timeout=30,
+    ).raise_for_status()

@@ -8,6 +8,7 @@ from jlab.config import (
     JlabConfig, load_config, save_config,
     load_session, save_session, clear_session,
     load_ps_api_key, save_ps_api_key, fetch_running_notebook,
+    ps_start_notebook, ps_stop_notebook,
 )
 from jlab.client import JupyterClient
 from jlab.display import DisplayFormatter
@@ -144,8 +145,19 @@ def setup(key: str | None):
     display.print_info("Fetching notebook info from Paperspace...")
     nb = fetch_running_notebook(api_key)
     if not nb:
-        display.print_error("No running notebook found on Paperspace.")
-        sys.exit(1)
+        # No running notebook — start it
+        display.print_info("No running notebook. Starting Free-A6000...")
+        nb = ps_start_notebook(api_key)
+        display.print_info("Waiting for notebook to be ready...")
+        import time
+        for _ in range(60):
+            time.sleep(5)
+            nb = fetch_running_notebook(api_key)
+            if nb:
+                break
+        else:
+            display.print_error("Notebook did not start in time. Check Paperspace dashboard.")
+            sys.exit(1)
 
     config = JlabConfig(url=nb["url"], token=nb["token"])
     client = JupyterClient(config)
@@ -196,6 +208,53 @@ def _setup_session(config, client):
             display.console.print(line)
     else:
         display.print_success("startup.sh completed")
+
+
+@main.command()
+@handle_errors
+def start():
+    """Start the Paperspace notebook (Free-A6000)."""
+    api_key = load_ps_api_key()
+    if not api_key:
+        display.print_error("No Paperspace API key. Run: jlab setup --key <key>")
+        sys.exit(1)
+
+    nb = fetch_running_notebook(api_key)
+    if nb:
+        display.print_success(f"Already running: {nb['url']}")
+        return
+
+    display.print_info("Starting Free-A6000...")
+    nb = ps_start_notebook(api_key)
+
+    import time
+    for _ in range(60):
+        time.sleep(5)
+        nb = fetch_running_notebook(api_key)
+        if nb:
+            display.print_success(f"Notebook running: {nb['url']}")
+            return
+    display.print_error("Notebook did not start in time. Check Paperspace dashboard.")
+    sys.exit(1)
+
+
+@main.command()
+@handle_errors
+def stop():
+    """Stop the running Paperspace notebook."""
+    api_key = load_ps_api_key()
+    if not api_key:
+        display.print_error("No Paperspace API key. Run: jlab setup --key <key>")
+        sys.exit(1)
+
+    nb = fetch_running_notebook(api_key)
+    if not nb:
+        display.print_info("No running notebook to stop.")
+        return
+
+    ps_stop_notebook(api_key)
+    clear_session()
+    display.print_success(f"Notebook stopped ({nb['name']})")
 
 
 @main.command()
