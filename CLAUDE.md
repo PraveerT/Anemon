@@ -12,46 +12,53 @@ Always start a session first. This keeps a kernel alive so every command is fast
 # Start session (do this FIRST, once per conversation)
 jlab session start
 
-# Now all commands reuse the same kernel — fast!
-jlab exec "ls /notebooks"
-jlab exec "nvidia-smi"
-jlab exec "cd /notebooks/PMamba && python train.py"
-
 # Change session working directory (persists across exec calls)
 jlab session cd /notebooks/PMamba
-jlab exec "ls"          # runs in /notebooks/PMamba
-jlab exec "python train.py"  # still in /notebooks/PMamba
 
-# Check session
+# Check session / Stop when done
 jlab session status
-
-# Stop when done
 jlab session stop
+```
+
+## Batch Commands (IMPORTANT - reduces tool calls)
+
+**Always batch multiple commands into a single `jlab exec` call:**
+
+```bash
+# GOOD — one tool call for 3 commands:
+jlab exec "ls /notebooks/PMamba" "cat README.md" "wc -l *.py"
+
+# BAD — 3 separate tool calls:
+jlab exec "ls /notebooks/PMamba"
+jlab exec "cat README.md"
+jlab exec "wc -l *.py"
+```
+
+Same for `jlab run` (Python code):
+```bash
+jlab run "import torch" "print(torch.cuda.is_available())" "print(torch.__version__)"
 ```
 
 ## Commands
 
 ```bash
-# Shell commands on remote
-jlab exec "command here"
+# Shell commands (batch multiple for efficiency)
+jlab exec "cmd1" "cmd2" "cmd3"
 jlab exec --cwd /notebooks/PMamba "python train.py"
 
-# Browse remote files (uses REST API, no kernel needed)
-jlab ls                          # list root
-jlab ls PMamba                   # list subdirectory
-jlab cat PMamba/train.py         # view file with syntax highlighting
+# Browse remote files (REST API, no kernel needed)
+jlab ls [path]
+jlab cat path/to/file
 
 # Find files
-jlab find "*.py"                 # find Python files
-jlab find "motion.py"            # find specific file
-jlab find "*.ipynb" --path /notebooks/PMamba
+jlab find "*.py" --path /notebooks/PMamba
 
 # Transfer files
-jlab download PMamba/model.py    # download to local
-jlab upload model.py PMamba/model.py  # upload to remote
+jlab download PMamba/model.py
+jlab upload model.py PMamba/model.py
 
-# Run Python code directly on remote kernel
-jlab run "import torch; print(torch.cuda.is_available())"
+# Run Python code (batch multiple)
+jlab run "code1" "code2" "code3"
 
 # Run a notebook
 jlab nb run PMamba/experiment.ipynb

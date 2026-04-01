@@ -169,11 +169,16 @@ def kernels():
 
 
 @main.command()
-@click.argument("code")
+@click.argument("code_snippets", nargs=-1, required=True, metavar="CODE")
 @click.option("--kernel", "-k", default=None, help="Kernel name to use")
 @handle_errors
-def run(code: str, kernel: str | None):
-    """Execute Python code on a remote kernel (one-shot)."""
+def run(code_snippets: tuple[str, ...], kernel: str | None):
+    """Execute Python code on a remote kernel.
+
+    Accepts multiple code snippets to execute in a single connection:
+
+        jlab run "import torch" "print(torch.cuda.is_available())" "print(torch.__version__)"
+    """
     config = load_config()
     client = JupyterClient(config)
 
@@ -189,9 +194,15 @@ def run(code: str, kernel: str | None):
         owns_kernel = True
 
     try:
-        result = conn.execute(code)
-        display.print_execution_result(result, 1)
-        if result.status == "error":
+        has_error = False
+        for i, code in enumerate(code_snippets):
+            if len(code_snippets) > 1:
+                display.console.print(f"[bold cyan]>>> {code}[/bold cyan]")
+            result = conn.execute(code)
+            display.print_execution_result(result, i + 1)
+            if result.status == "error":
+                has_error = True
+        if has_error:
             sys.exit(1)
     finally:
         conn.close()
@@ -200,11 +211,16 @@ def run(code: str, kernel: str | None):
 
 
 @main.command(name="exec")
-@click.argument("command")
+@click.argument("commands", nargs=-1, required=True)
 @click.option("--cwd", default=None, help="Working directory on remote")
 @handle_errors
-def exec_cmd(command: str, cwd: str | None):
-    """Run a shell command on the remote machine."""
+def exec_cmd(commands: tuple[str, ...], cwd: str | None):
+    """Run shell command(s) on the remote machine.
+
+    Accepts multiple commands to execute in a single connection:
+
+        jlab exec "ls /notebooks" "cat README.md" "wc -l *.py"
+    """
     if cwd:
         cwd = _fix_remote_path(cwd)
     config = load_config()
@@ -223,19 +239,32 @@ def exec_cmd(command: str, cwd: str | None):
         session_cwd = None
 
     try:
-        # Use explicit --cwd, or session cwd, or let subprocess use default
         effective_cwd = cwd or session_cwd
         cwd_arg = f", cwd={effective_cwd!r}" if effective_cwd else ""
-        code = (
-            f"import subprocess as _sp\n"
-            f"_r = _sp.run({command!r}, shell=True, capture_output=True, text=True{cwd_arg})\n"
-            f"if _r.stdout: print(_r.stdout, end='')\n"
-            f"if _r.stderr: print(_r.stderr, end='')"
-        )
-        result = conn.execute_streaming(code, timeout=600)
-        if result.status == "error" and result.traceback:
-            for line in result.traceback:
-                display.console.print(line)
+        has_error = False
+
+        for i, command in enumerate(commands):
+            # Print header when running multiple commands
+            if len(commands) > 1:
+                display.console.print(f"[bold cyan]$ {command}[/bold cyan]")
+
+            code = (
+                f"import subprocess as _sp\n"
+                f"_r = _sp.run({command!r}, shell=True, capture_output=True, text=True{cwd_arg})\n"
+                f"if _r.stdout: print(_r.stdout, end='')\n"
+                f"if _r.stderr: print(_r.stderr, end='')"
+            )
+            result = conn.execute_streaming(code, timeout=600)
+            if result.status == "error" and result.traceback:
+                for line in result.traceback:
+                    display.console.print(line)
+                has_error = True
+
+            # Separator between commands
+            if len(commands) > 1 and i < len(commands) - 1:
+                print()
+
+        if has_error:
             sys.exit(1)
     finally:
         conn.close()
