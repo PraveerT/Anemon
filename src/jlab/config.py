@@ -106,20 +106,17 @@ PS_DEFAULT_CONTAINER = "nvcr.io/nvidia/pytorch:23.10-py3"
 
 
 PS_NOTEBOOK_ID = "nfjbqnsvpx"
-PS_PROJECT_ID = "pitgq1c6bcy"
 
 
 def ps_start_notebook(api_key: str) -> dict:
-    """Start notebook nfjbqnsvpx with Free-A6000. Fails if unavailable."""
+    """Restart notebook nfjbqnsvpx with Free-A6000. Fails if unavailable."""
     import requests
     resp = requests.post(
-        f"{PS_LEGACY_API}/createNotebook",
+        f"{PS_LEGACY_API}/startNotebook",
         headers={"X-API-Key": api_key, "Content-Type": "application/json"},
         json={
+            "notebookId": PS_NOTEBOOK_ID,
             "machineType": "Free-A6000",
-            "projectId": PS_PROJECT_ID,
-            "name": "PMamba",
-            "container": PS_DEFAULT_CONTAINER,
             "shutdownTimeout": 6,
         },
         timeout=30,
