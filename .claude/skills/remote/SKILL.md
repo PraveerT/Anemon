@@ -7,15 +7,15 @@ argument-hint: "[command]"
 
 # Remote GPU Server Session
 
-Start a persistent jlab session and execute commands on the remote Paperspace Gradient GPU server.
+Auto-connect to the remote Paperspace Gradient GPU server and execute commands.
 
-## Setup
+## Setup (auto-connect)
 
-First, check if a session is already active. If not, start one:
+Run this first to connect and start a session automatically:
 
-!`jlab session status 2>&1 || echo "NO_SESSION"`
+!`jlab setup 2>&1`
 
-If no session is active, run `jlab session start` to create one.
+This reuses saved credentials, refreshes the token from `/notebooks/.jlab-token` if needed, and starts a persistent kernel session.
 
 ## If arguments were provided
 

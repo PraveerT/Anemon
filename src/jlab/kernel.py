@@ -1,5 +1,6 @@
 import json
 import ssl
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -85,6 +86,8 @@ class KernelConnection:
                 raw = self._ws.recv()
             except websocket.WebSocketTimeoutException:
                 break
+            except (websocket.WebSocketConnectionClosedException, OSError, ConnectionError) as e:
+                raise KernelError(f"Connection lost: {e}")
 
             # Skip binary frames
             if isinstance(raw, bytes):
@@ -157,6 +160,8 @@ class KernelConnection:
                 raw = self._ws.recv()
             except websocket.WebSocketTimeoutException:
                 break
+            except (websocket.WebSocketConnectionClosedException, OSError, ConnectionError) as e:
+                raise KernelError(f"Connection lost: {e}")
 
             if isinstance(raw, bytes):
                 continue
@@ -175,14 +180,18 @@ class KernelConnection:
 
             match msg_type:
                 case "stream":
-                    # Print immediately instead of collecting
-                    import sys
                     text = content["text"]
-                    if content["name"] == "stderr":
-                        sys.stderr.write(text)
-                        sys.stderr.flush()
-                    else:
-                        sys.stdout.write(text)
+                    try:
+                        if content["name"] == "stderr":
+                            sys.stderr.write(text)
+                            sys.stderr.flush()
+                        else:
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
+                    except UnicodeEncodeError:
+                        # Windows cp1252 can't encode some Unicode chars
+                        encoded = text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace")
+                        sys.stdout.write(encoded)
                         sys.stdout.flush()
                     result.outputs.append({
                         "type": "stream",

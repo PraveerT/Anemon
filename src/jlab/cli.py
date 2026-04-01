@@ -93,6 +93,82 @@ def connect(url: str, token: str, kernel: str):
 
 
 @main.command()
+@click.option("--url", default=None, help="Server URL (uses saved config if omitted)")
+@handle_errors
+def setup(url: str | None):
+    """Auto-connect and start a session.
+
+    Uses saved config to reconnect. If the token has changed (machine recreated),
+    reads the new token from /notebooks/.jlab-token on the remote.
+    """
+    from jlab.config import CONFIG_FILE
+
+    # Step 1: Get URL from arg, or saved config
+    saved_config = None
+    if CONFIG_FILE.exists():
+        try:
+            saved_config = load_config()
+        except Exception:
+            pass
+
+    server_url = url or (saved_config.url if saved_config else None)
+    if not server_url:
+        display.print_error("No saved config. Run 'jlab connect <url> --token <token>' first.")
+        sys.exit(1)
+
+    # Step 2: Try connecting with saved token
+    token = saved_config.token if saved_config else ""
+    config = JlabConfig(url=server_url.rstrip("/"), token=token)
+    client = JupyterClient(config)
+
+    try:
+        client.status()
+        display.print_success(f"Connected to {server_url}")
+    except Exception:
+        # Saved token failed — try reading .jlab-token with saved token via REST
+        display.print_info("Saved token failed, trying to read .jlab-token from remote...")
+        try:
+            content, _ = client.download_file(".jlab-token")
+            new_token = content.strip() if isinstance(content, str) else content.decode().strip()
+            config = JlabConfig(url=server_url.rstrip("/"), token=new_token)
+            client = JupyterClient(config)
+            client.status()
+            save_config(config)
+            display.print_success(f"Reconnected with fresh token")
+        except Exception:
+            display.print_error(
+                "Cannot connect. The token may have changed.\n"
+                "Run: jlab connect <url> --token <token>"
+            )
+            sys.exit(1)
+
+    save_config(config)
+
+    # Step 3: Start session if not already active
+    session = load_session()
+    if session:
+        try:
+            kernels = client.list_kernels()
+            if any(k.id == session["kernel_id"] for k in kernels):
+                display.print_success(f"Session active (kernel: {session['kernel_id'][:12]}..., cwd: {session.get('cwd', '?')})")
+                return
+        except Exception:
+            pass
+        clear_session()
+
+    kernel_info = client.start_kernel(config.default_kernel)
+    conn = KernelConnection(config, kernel_info.id)
+    conn.connect()
+    conn.execute("import subprocess, os", timeout=10)
+    cwd = "/notebooks"
+    conn.execute(f"os.chdir({cwd!r})", timeout=10)
+    conn.close()
+
+    save_session(kernel_info.id, cwd)
+    display.print_success(f"Session started (kernel: {kernel_info.id[:12]}..., cwd: {cwd})")
+
+
+@main.command()
 @handle_errors
 def status():
     """Check server status."""
