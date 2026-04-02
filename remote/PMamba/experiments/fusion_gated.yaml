@@ -1,0 +1,65 @@
+dataloader: nvidia_dataloader.NvidiaLoader
+phase: train
+num_epoch: 200
+work_dir: ./work_dir/fusion_gated/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+temporal_weights: ./work_dir/pmamba_branch/epoch110_model.pt
+temporal_source_prefix: ''
+temporal_target_prefix: temporal_branch
+spatial_weights: ./work_dir/quaternion_branch/epoch112_model.pt
+spatial_source_prefix: ''
+spatial_target_prefix: spatial_branch
+freeze: null
+strict_load: false
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0001
+  fusion_lr_mult: 1.0
+  temporal_prefix: temporal_branch
+  scheduler: cosine
+  num_epochs: 200
+  step:
+  - 160
+  - 180
+  - 190
+  weight_decay: 10.0
+  start_epoch: 0
+  nesterov: false
+train_loader_args:
+  phase: train
+  framerate: 32
+test_loader_args:
+  phase: test
+  framerate: 32
+model: models.fusion.MotionDualBranchFusion
+model_args:
+  pts_size: 256
+  num_classes: 25
+  aux_weight: 0.0
+  temporal_model_args:
+    knn:
+    - 32
+    - 24
+    - 48
+    - 24
+    topk: 8
+  spatial_model_args:
+    hidden_dims:
+    - 64
+    - 256
+    dropout: 0.05
+    edgeconv_k: 20
+    merge_eps: 1.0e-06
+    so3_weight: 0.0
+    rotation_sigma: 0.3
+    bearing_knn_k: 10
+    qcc_weight: 0.1
+  tta_k: 5
+eval_interval: 1
+save_interval: 1
+log_interval: 50
