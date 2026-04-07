@@ -908,6 +908,208 @@ class _CorrespondenceContrastiveLoss(nn.Module):
         return loss / max(count, 1)
 
 
+class _InfoNCETemporalLoss(nn.Module):
+    """InfoNCE contrastive loss using correspondence-based positive pairs.
+
+    For each point i at time t, the positive is the same physical point at
+    t+1 (via correspondence); negatives are all other points at t+1.
+    The softmax denominator always produces gradient, even when features
+    are initially uniform.
+    """
+
+    def __init__(self, temperature=0.1):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, encoded, num_frames, pts_per_frame, corr_matched):
+        B, D, _ = encoded.shape
+        feat = encoded.view(B, D, num_frames, pts_per_frame)
+        loss = torch.tensor(0.0, device=encoded.device)
+        count = 0
+
+        for t in range(num_frames - 1):
+            mask = corr_matched[:, t]  # (B, P) bool
+            for b in range(B):
+                valid_idx = mask[b].nonzero(as_tuple=True)[0]
+                if len(valid_idx) < 2:
+                    continue
+                anchors = F.normalize(feat[b, :, t, valid_idx].T, dim=-1)
+                targets = F.normalize(feat[b, :, t + 1].T, dim=-1)  # all P points as candidates
+                sim = anchors @ targets.T / self.temperature  # (V, P)
+                labels = valid_idx  # positive is at the same index
+                loss = loss + F.cross_entropy(sim, labels)
+                count += 1
+
+        return loss / max(count, 1)
+
+
+class _TemporalPredictionLoss(nn.Module):
+    """Predict next-frame features from current-frame features.
+
+    A lightweight MLP predicts feat_{t+1} from feat_t for matched points.
+    MSE is always non-zero from epoch 0, guaranteeing gradient flow.
+    """
+
+    def __init__(self, feat_dim):
+        super().__init__()
+        self.predictor = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim),
+            nn.GELU(),
+            nn.Linear(feat_dim, feat_dim),
+        )
+
+    def forward(self, encoded, num_frames, pts_per_frame, corr_matched):
+        B, D, _ = encoded.shape
+        feat = encoded.view(B, D, num_frames, pts_per_frame)
+        loss = torch.tensor(0.0, device=encoded.device)
+        count = 0
+
+        for t in range(num_frames - 1):
+            mask = corr_matched[:, t].float()  # (B, P)
+            n_valid = mask.sum()
+            if n_valid < 1:
+                continue
+            feat_t = feat[:, :, t].permute(0, 2, 1)       # (B, P, D)
+            feat_next = feat[:, :, t + 1].permute(0, 2, 1) # (B, P, D)
+            predicted = self.predictor(feat_t)
+            per_point = ((predicted - feat_next.detach()) ** 2).mean(dim=-1)
+            loss = loss + (per_point * mask).sum() / n_valid
+            count += 1
+
+        return loss / max(count, 1)
+
+
+class _LocalCycleConsistencyLoss(nn.Module):
+    """Per-point cycle consistency on bearing quaternion forward rotations.
+
+    For triplets of consecutive frames (t, t+1, t+2):
+      q_composed = q_fwd(t->t+1) * q_fwd(t+1->t+2)
+      q_direct   = q_fwd(t->t+2)
+      loss = geodesic_distance(q_composed, q_direct)
+
+    No global rotation assumption -- each point checked independently.
+    """
+
+    def forward(self, points_4d, num_frames, corr_matched=None):
+        B, _, P, _ = points_4d.shape
+        device = points_4d.device
+        xyz = points_4d[..., :3]
+
+        bbox_min = xyz.min(dim=2).values
+        bbox_max = xyz.max(dim=2).values
+        centroids = (bbox_min + bbox_max) / 2
+        directions = xyz - centroids.unsqueeze(2)
+        directions = directions / directions.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+
+        dot = directions[..., 1].clamp(-1 + 1e-7, 1 - 1e-7)
+        half_angle = torch.acos(dot) / 2
+        axis = torch.stack([directions[..., 2], torch.zeros_like(directions[..., 0]),
+                            -directions[..., 0]], dim=-1)
+        axis = axis / axis.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+        w = torch.cos(half_angle)
+        sin_ha = torch.sin(half_angle)
+        bearing_q = torch.stack([w, axis[..., 0] * sin_ha, axis[..., 1] * sin_ha,
+                                 axis[..., 2] * sin_ha], dim=-1)
+
+        conj_sign = torch.tensor([1, -1, -1, -1], device=device, dtype=bearing_q.dtype)
+
+        # q_fwd(t->t+1) for each consecutive pair
+        q_fwd = F.normalize(_hamilton_product(
+            bearing_q[:, 1:], bearing_q[:, :-1] * conj_sign), dim=-1)
+
+        # q_direct(t->t+2): skip one frame
+        q_direct = F.normalize(_hamilton_product(
+            bearing_q[:, 2:], bearing_q[:, :-2] * conj_sign), dim=-1)
+
+        # q_composed = q_fwd(t+1->t+2) * q_fwd(t->t+1)
+        q_composed = F.normalize(_hamilton_product(
+            q_fwd[:, 1:], q_fwd[:, :-1]), dim=-1)
+
+        dot_prod = (q_composed * q_direct).sum(dim=-1).abs().clamp(0, 1 - 1e-7)
+        geo_dist = 2 * torch.acos(dot_prod)  # (B, F-2, P)
+
+        if corr_matched is not None:
+            mask = (corr_matched[:, :-1] & corr_matched[:, 1:]).float()
+            n_valid = mask.sum()
+            if n_valid > 0:
+                return (geo_dist * mask).sum() / n_valid
+            return torch.tensor(0.0, device=device)
+        return geo_dist.mean()
+
+
+class _DisplacementAgreementLoss(nn.Module):
+    """Feature consistency loss grounded in displacement agreement.
+
+    Points whose spatial neighbors move consistently (rigid region) should
+    have similar encoded features to those neighbors.
+    """
+
+    def __init__(self, knn_k=10):
+        super().__init__()
+        self.knn_k = knn_k
+
+    def forward(self, encoded, points_4d, num_frames, pts_per_frame,
+                corr_matched=None):
+        B, D, _ = encoded.shape
+        device = encoded.device
+        xyz = points_4d[..., :3]
+        feat = encoded.view(B, D, num_frames, pts_per_frame)
+
+        loss = torch.tensor(0.0, device=device)
+        count = 0
+
+        for t in range(num_frames - 1):
+            disp = xyz[:, t + 1] - xyz[:, t]  # (B, P, 3)
+            pts_t = xyz[:, t].transpose(1, 2).contiguous()
+            k = min(self.knn_k, pts_per_frame - 1)
+            knn_idx = _knn_indices(pts_t, k)  # (B, P, k)
+
+            batch_idx = torch.arange(B, device=device).view(B, 1, 1).expand_as(knn_idx)
+            nbr_disp = disp[batch_idx, knn_idx]  # (B, P, k, 3)
+            disp_diff = nbr_disp - disp.unsqueeze(2)
+            disp_var = (disp_diff ** 2).sum(dim=-1).mean(dim=-1)  # (B, P)
+            scale = disp_var.median().clamp(min=1e-6)
+            disp_rigidity = torch.exp(-disp_var / scale).detach()
+
+            feat_t = feat[:, :, t].permute(0, 2, 1)  # (B, P, D)
+            nbr_feat = feat_t[batch_idx, knn_idx]  # (B, P, k, D)
+            cos_sim = F.cosine_similarity(
+                feat_t.unsqueeze(2).expand_as(nbr_feat), nbr_feat, dim=-1)
+            mean_sim = cos_sim.mean(dim=-1)  # (B, P)
+
+            per_point = disp_rigidity * (1.0 - mean_sim)
+
+            if corr_matched is not None:
+                m = corr_matched[:, t].float()
+                n_valid = m.sum()
+                if n_valid > 0:
+                    loss = loss + (per_point * m).sum() / n_valid
+                    count += 1
+            else:
+                loss = loss + per_point.mean()
+                count += 1
+
+        return loss / max(count, 1)
+
+
+def _compute_bearing_qcc_multiscale(points_4d, num_frames, scales=(5, 15, 40),
+                                     corr_matched=None):
+    """Bearing QCC at multiple spatial scales.
+
+    Returns:
+        rigidity: (B, len(scales), F*P)
+        valid_ratio: float
+    """
+    rigidities = []
+    valid_ratio = 1.0
+    for k in scales:
+        rig, vr = _compute_bearing_qcc_aligned(
+            points_4d, num_frames, knn_k=k, corr_matched=corr_matched)
+        rigidities.append(rig)
+        valid_ratio = vr
+    return torch.cat(rigidities, dim=1), valid_ratio
+
+
 class BearingQCCFeatureMotion(
     EdgeConvQuaternionStackedDualMergeWeightedRMSAttentionReadoutMotion
 ):
@@ -917,6 +1119,16 @@ class BearingQCCFeatureMotion(
     point is at the same index across frames.  This gives the bearing QCC
     rigidity signal proper point tracking, and enables a correspondence-
     contrastive auxiliary loss on encoder features.
+
+    qcc_variant controls which auxiliary loss / rigidity computation to use:
+      - 'grounded_cycle': pooled-segment quaternion cycle + XYZ reconstruction
+        grounding (the 80.29% baseline loss). No correspondence required.
+      - 'contrastive': cosine contrastive loss on features
+      - 'infonce': InfoNCE temporal contrastive with negatives
+      - 'prediction': temporal feature prediction via MLP
+      - 'local_cycle': per-point quaternion cycle consistency
+      - 'displacement': displacement-agreement feature consistency
+      - 'multiscale': multi-scale rigidity features, no aux loss
     """
 
     def __init__(
@@ -931,6 +1143,10 @@ class BearingQCCFeatureMotion(
         rotation_sigma=0.3,
         bearing_knn_k=10,
         qcc_weight=0.1,
+        qcc_variant='contrastive',
+        rigidity_scales=(5, 15, 40),
+        disable_rigidity=False,
+        decouple_sampling=False,
     ):
         super().__init__(
             num_classes=num_classes,
@@ -945,18 +1161,28 @@ class BearingQCCFeatureMotion(
         self.rotation_sigma = rotation_sigma
         self.bearing_knn_k = bearing_knn_k
         self.qcc_weight = qcc_weight
+        self.qcc_variant = qcc_variant
+        self.rigidity_scales = rigidity_scales
+        self.disable_rigidity = disable_rigidity
+        self.decouple_sampling = decouple_sampling
         self.latest_aux_loss = None
         self.latest_aux_metrics = {}
 
+        rig_channels = len(rigidity_scales) if qcc_variant == 'multiscale' else 1
         self.rigidity_proj = nn.Sequential(
-            nn.Conv1d(1, hidden2, kernel_size=1, bias=True),
+            nn.Conv1d(rig_channels, hidden2, kernel_size=1, bias=True),
             nn.Tanh(),
         )
         nn.init.zeros_(self.rigidity_proj[0].weight)
         nn.init.zeros_(self.rigidity_proj[0].bias)
 
         self.corr_contrastive = _CorrespondenceContrastiveLoss()
-        # Keep legacy cycle module for checkpoint compat (not used in forward)
+        self.infonce_loss = _InfoNCETemporalLoss(temperature=0.1)
+        self.prediction_loss = _TemporalPredictionLoss(feat_dim=hidden2)
+        self.local_cycle = _LocalCycleConsistencyLoss()
+        self.displacement_loss = _DisplacementAgreementLoss(knn_k=bearing_knn_k)
+        # Grounded cycle consistency (used by qcc_variant='grounded_cycle',
+        # the original 80.29% baseline loss)
         self.cycle_module = _GroundedCycleConsistency(feat_dim=hidden2)
 
     def get_auxiliary_loss(self):
@@ -1059,35 +1285,99 @@ class BearingQCCFeatureMotion(
 
         return sampled, corr_matched
 
+    def _compute_corr_mask_for_independent_sample(self, aux_sampled, aux_input):
+        """Compute correspondence mask for independently-sampled points.
+
+        Points were sampled via _sample_points (random/linspace), NOT via
+        correspondence chains.  We check which sampled points happen to have
+        valid correspondences landing in the next frame's sampled set.
+        """
+        orig_flat_idx = aux_sampled['orig_flat_idx']  # (B, F, S)
+        corr_target = aux_input['corr_full_target_idx']  # (B, total_pts)
+        corr_weight = aux_input['corr_full_weight']  # (B, total_pts)
+
+        batch_size = orig_flat_idx.shape[0]
+        num_frames = orig_flat_idx.shape[1]
+        pts_per_frame = orig_flat_idx.shape[2]
+        total_pts = corr_target.shape[-1]
+        raw_ppf = total_pts // num_frames
+        device = orig_flat_idx.device
+
+        corr_matched = torch.zeros(batch_size, num_frames - 1, pts_per_frame,
+                                   dtype=torch.bool, device=device)
+
+        for b in range(batch_size):
+            for t in range(num_frames - 1):
+                src_orig = orig_flat_idx[b, t].long()
+                tgt_flat = corr_target[b, src_orig]
+                tgt_w = corr_weight[b, src_orig]
+                tgt_frame = tgt_flat // raw_ppf
+
+                valid_src = (tgt_flat >= 0) & (tgt_w > 0) & (tgt_frame == t + 1)
+
+                # Check if target lands in next frame's sampled set
+                next_orig = orig_flat_idx[b, t + 1].long()
+                # Build lookup set
+                next_set = set(next_orig.cpu().tolist())
+                tgt_flat_cpu = tgt_flat.cpu()
+                for s in valid_src.nonzero(as_tuple=True)[0]:
+                    if tgt_flat_cpu[s].item() in next_set:
+                        corr_matched[b, t, s] = True
+
+        return corr_matched
+
     def extract_features(self, inputs, aux_input=None):
-        points, aux_unpacked = self._unpack_inputs(inputs)
+        # Handle both direct dict input and pre-unpacked (points, aux) from forward()
+        if isinstance(inputs, dict):
+            points = inputs['points']
+            aux_unpacked = inputs
+        elif aux_input is not None:
+            points = inputs
+            aux_unpacked = aux_input
+        else:
+            points = inputs
+            aux_unpacked = None
 
         has_corr = (aux_unpacked is not None
                     and 'orig_flat_idx' in aux_unpacked
                     and 'corr_full_target_idx' in aux_unpacked
                     and 'corr_full_weight' in aux_unpacked)
 
-        if has_corr:
+        if has_corr and not self.decouple_sampling:
+            # Correspondence-guided sampling (legacy: coupled)
             points_4d = points[..., :4]
             sampled, corr_matched = self._correspondence_guided_sample(
                 points_4d, aux_unpacked)
+        elif has_corr and self.decouple_sampling:
+            # Standard sampling + post-hoc correspondence mask
+            sampled, sampled_aux = self._sample_points_with_aux(
+                points, aux_input=aux_unpacked)
+            sampled = sampled[..., :4]
+            corr_matched = self._compute_corr_mask_for_independent_sample(
+                sampled_aux, aux_unpacked)
         else:
             sampled = self._sample_points(points)
             corr_matched = None
 
         batch_size, num_frames, pts_per_frame, _ = sampled.shape
 
-        # Bearing QCC with aligned correspondence
-        rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
-            sampled, num_frames, knn_k=self.bearing_knn_k,
-            corr_matched=corr_matched)
+        # Bearing QCC rigidity
+        if self.qcc_variant == 'multiscale':
+            rigidity, corr_valid_ratio = _compute_bearing_qcc_multiscale(
+                sampled, num_frames, scales=self.rigidity_scales,
+                corr_matched=corr_matched)
+        else:
+            rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
+                sampled, num_frames, knn_k=self.bearing_knn_k,
+                corr_matched=corr_matched)
 
         point_features = sampled.reshape(batch_size, -1, 4).transpose(1, 2).contiguous()
         encoded = self._encode_to_pre_merge(point_features)
 
         # Modulate with rigidity
-        modulation = self.rigidity_proj(rigidity)
-        encoded = encoded * (1.0 + modulation)
+        if not self.disable_rigidity:
+            modulation = self.rigidity_proj(rigidity)
+            encoded = encoded * (1.0 + modulation)
 
         # Auxiliary losses
         self.latest_aux_loss = None
@@ -1110,12 +1400,40 @@ class BearingQCCFeatureMotion(
                 total_aux = total_aux + self.so3_weight * so3_loss
                 metrics['so3_equiv_raw'] = so3_loss.detach()
 
-            # Correspondence-contrastive loss (replaces broken cycle consistency)
-            if self.qcc_weight > 0 and corr_matched is not None:
-                qcc_loss = self.corr_contrastive(
-                    encoded, num_frames, pts_per_frame, corr_matched)
-                total_aux = total_aux + self.qcc_weight * qcc_loss
-                metrics['qcc_raw'] = qcc_loss.detach()
+            # QCC variant dispatch
+            if self.qcc_weight > 0:
+                if self.qcc_variant == 'grounded_cycle':
+                    # Original 80.29% baseline loss: pooled-segment quaternion
+                    # estimation grounded by XYZ reconstruction + cycle constraint.
+                    # Does not require correspondence data.
+                    qcc_loss, qcc_metrics = self.cycle_module(
+                        encoded, num_frames, pts_per_frame,
+                        sampled[..., :3],
+                    )
+                    total_aux = total_aux + self.qcc_weight * qcc_loss
+                    metrics.update(qcc_metrics)
+                    metrics['qcc_raw'] = qcc_loss.detach()
+                elif corr_matched is not None:
+                    if self.qcc_variant == 'infonce':
+                        qcc_loss = self.infonce_loss(
+                            encoded, num_frames, pts_per_frame, corr_matched)
+                    elif self.qcc_variant == 'prediction':
+                        qcc_loss = self.prediction_loss(
+                            encoded, num_frames, pts_per_frame, corr_matched)
+                    elif self.qcc_variant == 'local_cycle':
+                        qcc_loss = self.local_cycle(
+                            sampled, num_frames, corr_matched=corr_matched)
+                    elif self.qcc_variant == 'displacement':
+                        qcc_loss = self.displacement_loss(
+                            encoded, sampled, num_frames, pts_per_frame,
+                            corr_matched=corr_matched)
+                    elif self.qcc_variant == 'contrastive':
+                        qcc_loss = self.corr_contrastive(
+                            encoded, num_frames, pts_per_frame, corr_matched)
+                    else:
+                        qcc_loss = torch.tensor(0.0, device=encoded.device)
+                    total_aux = total_aux + self.qcc_weight * qcc_loss
+                    metrics['qcc_raw'] = qcc_loss.detach()
 
             metrics['qcc_valid_ratio'] = torch.tensor(corr_valid_ratio)
             metrics['rigidity_mean'] = rigidity.mean().detach()
