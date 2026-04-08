@@ -1,0 +1,66 @@
+# Exp 6n: SHALLOW MLP grounded_cycle, N=12 segments, PRETRAINED preload
+# Combines the (slight) segment-count benefit with the pretraining advantage.
+# Loads from nocorr_v4/epoch110_model.pt — the same preload that quaternion_branch
+# (80.29%) and quaternion_corr_fixed_finetune (79.88%) used. If N=12 with this
+# preload beats 80.29%, we have a new peak.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_cycle_n12_pretrained_v6n/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+weights: ./work_dir/quaternion_nocorr_v4/epoch110_model.pt
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.1
+  qcc_variant: grounded_cycle
+  cycle_module_type: deep_mlp
+  num_cycle_segments: 12
+  cycle_n_hidden_layers: 1

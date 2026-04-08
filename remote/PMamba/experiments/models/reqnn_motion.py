@@ -813,6 +813,116 @@ class _GroundedCycleConsistency(nn.Module):
         return total, metrics
 
 
+class _GroundedCycleConsistencyDeep(nn.Module):
+    """Deeper-MLP grounded cycle consistency, generalized to N segments.
+
+    Same forward semantics as _GroundedCycleConsistency:
+      - Pool features per segment, predict pairwise quaternions from
+        [src, target.detach()] using an MLP head
+      - Reconstruction loss against raw centered XYZ
+      - Cycle composition constraint q_{1,2}*q_{2,3}*...*q_{N,1} = identity
+
+    Differences:
+      - Configurable num_segments (3, 6, 9, ...) instead of hardcoded 3
+      - Deeper MLP head (configurable n_hidden_layers) for more capacity
+
+    Why not transformer: attention layers leak gradient through the
+    .detach() pattern (token-level detach is bypassed by the attention
+    weights), causing degenerate self-referential cycle solutions that
+    destabilize the encoder.  The MLP keeps the gradient flow clean.
+    """
+
+    def __init__(self, feat_dim, num_segments=3, n_hidden_layers=3):
+        super().__init__()
+        self.feat_dim = feat_dim
+        self.num_segments = num_segments
+
+        # Deep MLP head: takes [src, target.detach()] -> quaternion
+        # n_hidden_layers controls depth (original MLP was 2 layers).
+        layers = [
+            nn.Linear(feat_dim * 2, feat_dim),
+            nn.GELU(),
+        ]
+        for _ in range(max(n_hidden_layers - 1, 0)):
+            layers += [
+                nn.LayerNorm(feat_dim),
+                nn.Linear(feat_dim, feat_dim),
+                nn.GELU(),
+            ]
+        layers += [nn.Linear(feat_dim, 4)]
+        self.quat_head = nn.Sequential(*layers)
+
+    def _estimate_quaternion(self, src_pooled, tgt_pooled):
+        combined = torch.cat([src_pooled, tgt_pooled], dim=-1)
+        q = self.quat_head(combined)
+        return F.normalize(q, dim=-1)
+
+    def forward(self, encoded, num_frames, pts_per_frame, points_xyz):
+        batch = encoded.shape[0]
+        device = encoded.device
+        N = self.num_segments
+        seg_size = max(num_frames // N, 1)
+
+        # Pool features per segment.  Last segment absorbs the remainder.
+        feat = encoded.permute(0, 2, 1).reshape(
+            batch, num_frames, pts_per_frame, self.feat_dim,
+        )
+        seg_feats = []
+        seg_xyzs = []
+        for k in range(N):
+            start = k * seg_size
+            end = (k + 1) * seg_size if k < N - 1 else num_frames
+            if start >= num_frames:
+                start = max(num_frames - 1, 0)
+                end = num_frames
+            seg_feat = feat[:, start:end].reshape(batch, -1, self.feat_dim).mean(dim=1)
+            seg_xyz = points_xyz[:, start:end].reshape(batch, -1, 3)
+            seg_feats.append(seg_feat)
+            seg_xyzs.append(seg_xyz)
+
+        # Predict quaternion for each consecutive pair (with wrap-around)
+        # Same detach pattern as the original 3-segment version: target is
+        # frozen, gradient flows only through the source segment.
+        quats = []
+        recon_loss = torch.tensor(0.0, device=device)
+        for i in range(N):
+            j = (i + 1) % N
+            q = self._estimate_quaternion(seg_feats[i], seg_feats[j].detach())
+            quats.append(q)
+
+            src = seg_xyzs[i]
+            tgt = seg_xyzs[j]
+            src_c = src - src.mean(dim=1, keepdim=True)
+            tgt_c = tgt - tgt.mean(dim=1, keepdim=True)
+            min_pts = min(src_c.shape[1], tgt_c.shape[1])
+            src_c = src_c[:, :min_pts]
+            tgt_c = tgt_c[:, :min_pts]
+            rotated = _quaternion_rotate_vector(
+                q.unsqueeze(1).expand(-1, src_c.shape[1], -1), src_c,
+            )
+            recon_loss = recon_loss + F.mse_loss(rotated, tgt_c.detach())
+        recon_loss = recon_loss / N
+
+        # Cycle: composition of all N quats should be identity
+        q_cycle = quats[0]
+        for q in quats[1:]:
+            q_cycle = _hamilton_product(q_cycle, q)
+
+        q_id = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device)
+        loss_pos = ((q_cycle - q_id) ** 2).sum(dim=-1)
+        loss_neg = ((q_cycle + q_id) ** 2).sum(dim=-1)
+        cycle_loss = torch.min(loss_pos, loss_neg).mean()
+
+        total = recon_loss + cycle_loss
+
+        metrics = {
+            'cycle_raw': cycle_loss.detach(),
+            'recon_raw': recon_loss.detach(),
+            'q_cycle_w': q_cycle[..., 0].abs().mean().detach(),
+        }
+        return total, metrics
+
+
 def _compute_bearing_qcc_aligned(points_4d, num_frames, knn_k=10, corr_matched=None):
     """Bearing QCC for correspondence-aligned point sampling.
 
@@ -1123,6 +1233,9 @@ class BearingQCCFeatureMotion(
     qcc_variant controls which auxiliary loss / rigidity computation to use:
       - 'grounded_cycle': pooled-segment quaternion cycle + XYZ reconstruction
         grounding (the 80.29% baseline loss). No correspondence required.
+        cycle_module_type='mlp'      -> 3-segment shallow MLP head (baseline)
+        cycle_module_type='deep_mlp' -> N-segment deeper MLP head with
+                                        LayerNorm, configurable depth
       - 'contrastive': cosine contrastive loss on features
       - 'infonce': InfoNCE temporal contrastive with negatives
       - 'prediction': temporal feature prediction via MLP
@@ -1147,6 +1260,9 @@ class BearingQCCFeatureMotion(
         rigidity_scales=(5, 15, 40),
         disable_rigidity=False,
         decouple_sampling=False,
+        cycle_module_type='mlp',
+        num_cycle_segments=3,
+        cycle_n_hidden_layers=3,
     ):
         super().__init__(
             num_classes=num_classes,
@@ -1165,6 +1281,8 @@ class BearingQCCFeatureMotion(
         self.rigidity_scales = rigidity_scales
         self.disable_rigidity = disable_rigidity
         self.decouple_sampling = decouple_sampling
+        self.cycle_module_type = cycle_module_type
+        self.num_cycle_segments = num_cycle_segments
         self.latest_aux_loss = None
         self.latest_aux_metrics = {}
 
@@ -1181,9 +1299,18 @@ class BearingQCCFeatureMotion(
         self.prediction_loss = _TemporalPredictionLoss(feat_dim=hidden2)
         self.local_cycle = _LocalCycleConsistencyLoss()
         self.displacement_loss = _DisplacementAgreementLoss(knn_k=bearing_knn_k)
-        # Grounded cycle consistency (used by qcc_variant='grounded_cycle',
-        # the original 80.29% baseline loss)
-        self.cycle_module = _GroundedCycleConsistency(feat_dim=hidden2)
+        # Grounded cycle consistency (used by qcc_variant='grounded_cycle')
+        # cycle_module_type='mlp':      original 80.29% shallow MLP, 3 segments
+        # cycle_module_type='deep_mlp': deeper MLP head + configurable
+        #                               num_cycle_segments (3, 6, 9, ...)
+        if cycle_module_type == 'deep_mlp':
+            self.cycle_module = _GroundedCycleConsistencyDeep(
+                feat_dim=hidden2,
+                num_segments=num_cycle_segments,
+                n_hidden_layers=cycle_n_hidden_layers,
+            )
+        else:
+            self.cycle_module = _GroundedCycleConsistency(feat_dim=hidden2)
 
     def get_auxiliary_loss(self):
         return self.latest_aux_loss

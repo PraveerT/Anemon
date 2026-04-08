@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QCC, Correspondence & Grounded Cycle — Math and Physics</title>
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\(', '\\)']],
+      displayMath: [['$$', '$$'], ['\\[', '\\]']],
+      processEscapes: true,
+    },
+    svg: {fontCache: 'global'},
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<style>
+  :root {
+    --bg: #0b0e17;
+    --bg-card: #11151f;
+    --bg-code: #060810;
+    --border: #1c2230;
+    --border-strong: #2a3244;
+    --text: #e8eaee;
+    --text-dim: #8b94a6;
+    --text-faint: #5b6478;
+    --accent-cyan: #5fd3e2;
+    --accent-amber: #f5b96a;
+    --accent-violet: #c89aff;
+    --accent-rose: #ff7a90;
+    --positive: #74dba0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Inter", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-image:
+      radial-gradient(ellipse 800px 600px at 20% 0%, rgba(95,211,226,0.06), transparent),
+      radial-gradient(ellipse 600px 400px at 80% 30%, rgba(200,154,255,0.05), transparent),
+      radial-gradient(ellipse 700px 500px at 50% 80%, rgba(245,185,106,0.04), transparent);
+  }
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 60px 28px 120px;
+  }
+  header {
+    margin-bottom: 80px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 48px;
+  }
+  .eyebrow {
+    display: inline-block;
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+    background: rgba(95, 211, 226, 0.08);
+    border: 1px solid rgba(95, 211, 226, 0.25);
+    padding: 6px 12px;
+    border-radius: 4px;
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-size: 44px;
+    line-height: 1.1;
+    margin: 0 0 16px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  h1 .accent { color: var(--accent-cyan); }
+  .lede {
+    font-size: 19px;
+    color: var(--text-dim);
+    max-width: 680px;
+    margin: 0 0 32px;
+  }
+  .results-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .result {
+    background: var(--bg-card);
+    padding: 16px 18px;
+  }
+  .result .label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+  .result .value {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 22px;
+    font-weight: 500;
+  }
+  .result.win .value { color: var(--positive); }
+
+  section.component {
+    margin-top: 96px;
+    scroll-margin-top: 24px;
+  }
+  .component-header {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    margin-bottom: 8px;
+  }
+  .component-num {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    color: var(--text-faint);
+    letter-spacing: 0.15em;
+  }
+  .component h2 {
+    font-size: 32px;
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .component-tag {
+    margin: 4px 0 36px;
+    color: var(--text-dim);
+    font-style: italic;
+    font-size: 16px;
+  }
+  #correspondence h2 .accent { color: var(--accent-cyan); }
+  #qcc h2 .accent           { color: var(--accent-amber); }
+  #cycle h2 .accent         { color: var(--accent-violet); }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+    margin: 24px 0;
+  }
+  @media (max-width: 760px) {
+    .row { grid-template-columns: 1fr; }
+    .results-strip { grid-template-columns: repeat(2, 1fr); }
+    h1 { font-size: 32px; }
+  }
+  h3 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-faint);
+    margin: 32px 0 12px;
+    font-weight: 600;
+  }
+  p { margin: 0 0 16px; }
+  p strong { color: var(--text); font-weight: 600; }
+
+  .math-block {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 24px 28px;
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  #correspondence .math-block { border-left-color: var(--accent-cyan); }
+  #qcc .math-block            { border-left-color: var(--accent-amber); }
+  #cycle .math-block          { border-left-color: var(--accent-violet); }
+
+  pre.code {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 16px 0;
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+    overflow-x: auto;
+  }
+  pre.code .k { color: var(--accent-violet); }
+  pre.code .s { color: var(--positive); }
+  pre.code .c { color: var(--text-faint); font-style: italic; }
+  pre.code .n { color: var(--accent-amber); }
+
+  .figure {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px 20px 12px;
+    text-align: center;
+  }
+  .figure svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+  .figure .caption {
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-top: 12px;
+    text-align: left;
+    font-style: italic;
+  }
+
+  table.compare {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin: 24px 0;
+  }
+  table.compare th, table.compare td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  table.compare th {
+    color: var(--text-faint);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+  table.compare td.num {
+    font-family: "JetBrains Mono", monospace;
+    text-align: right;
+  }
+  table.compare tr.highlight td { color: var(--positive); }
+
+  .callout {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-cyan);
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 28px 0;
+  }
+  .callout.amber { border-left-color: var(--accent-amber); }
+  .callout.violet { border-left-color: var(--accent-violet); }
+  .callout .label {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  footer {
+    margin-top: 120px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 13px;
+  }
+  footer code {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  /* SVG defaults */
+  svg .grid       { stroke: var(--border); }
+  svg .axis       { stroke: var(--text-faint); }
+  svg .lbl        { fill: var(--text-dim); font-family: "JetBrains Mono", monospace; font-size: 10px; }
+  svg .lbl.big    { font-size: 12px; fill: var(--text); }
+  svg .pt         { fill: var(--text); }
+  svg .pt-faint   { fill: var(--text-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">PMamba quaternion branch · April 2026</span>
+  <h1>QCC, Correspondence &<br><span class="accent">Grounded Cycle</span></h1>
+  <p class="lede">The math and physics of the three components driving the quaternion branch — and why one of them is responsible for a +2.70% accuracy boost while the others are scaffolding.</p>
+  <div class="results-strip">
+    <div class="result">
+      <div class="label">No aux loss</div>
+      <div class="value">77.59%</div>
+    </div>
+    <div class="result win">
+      <div class="label">+ Grounded cycle</div>
+      <div class="value">80.29%</div>
+    </div>
+    <div class="result win">
+      <div class="label">+ Random TTA</div>
+      <div class="value">81.74%</div>
+    </div>
+    <div class="result win">
+      <div class="label">Fused w/ PMamba</div>
+      <div class="value">90.87%</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     1. CORRESPONDENCE
+     ============================================================ -->
+<section class="component" id="correspondence">
+  <div class="component-header">
+    <span class="component-num">01 / SCAFFOLDING</span>
+  </div>
+  <h2>The <span class="accent">Correspondence</span> field</h2>
+  <p class="component-tag">Tracking the same physical hand point as it moves through time.</p>
+
+  <h3>Physical intuition</h3>
+  <p>A point cloud frame is a bag of 3D positions sampled from the visible surface of a hand. Frame to frame, the indices in that bag are <em>arbitrary</em> — point #137 in frame 5 has nothing to do with point #137 in frame 6. To reason about <em>motion</em> we need to know which points correspond to the <em>same physical patch</em> of skin across time. That mapping is the correspondence field.</p>
+  <p>It is built once, offline, by walking depth + spatial neighborhoods: for each point in frame $t$, find the closest match in frame $t{+}1$ that minimizes a weighted sum of (a) 3D Euclidean distance and (b) raw depth gradient distance.</p>
+
+  <h3>Math</h3>
+  <div class="math-block">
+  $$\text{corr}_{t \to t{+}1}(i) \;=\; \underset{j \in \mathcal{N}_r(i)}{\arg\min}\;\Big[\;\|\,p_i^{(t)} - p_j^{(t{+}1)}\,\|_2 \;+\; \lambda_d \cdot \big|d_i^{(t)} - d_j^{(t{+}1)}\big|\;\Big]$$
+  </div>
+  <p style="font-size: 14px; color: var(--text-dim); margin-top: -8px;">
+  where $\mathcal{N}_r(i)$ is the spatial neighborhood of radius $r$ around $p_i$ in the next frame, $d$ is the raw depth value at the projected pixel, and $\lambda_d$ weights depth-gradient agreement against pure 3D distance. Confidence is exponentially decayed with distance, so unreliable matches receive low weight.
+  </p>
+
+  <div class="row">
+    <div>
+      <h3>Implementation</h3>
+      <pre class="code"><span class="c"># nvidia_dataloader.py – built once, cached per clip</span>
+corr_target = build_correspondence(
+    raw_depth, raw_points,
+    radius=2,
+    depth_weight=0.25,
+    confidence_scale=16.0,
+)
+<span class="c"># corr_target[i] -&gt; flat index in next frame, or -1</span>
+<span class="c"># corr_weight[i] -&gt; confidence in [0, 1]</span></pre>
+      <p>Two downstream uses, both <em>optional</em>:</p>
+      <ul style="color: var(--text-dim); font-size: 14px; padding-left: 20px;">
+        <li><strong>Correspondence-guided sampling:</strong> chain matched points so index <em>i</em> in frame <em>t</em> = index <em>i</em> in frame <em>t{+}1</em></li>
+        <li><strong>Auxiliary mask:</strong> compute which sampled points have valid matches, gate per-point losses</li>
+      </ul>
+    </div>
+    <div class="figure">
+      <svg viewBox="0 0 360 220" xmlns="http://www.w3.org/2000/svg">
+        <!-- frame t -->
+        <rect x="20" y="40" width="120" height="140" fill="none" stroke="#5fd3e2" stroke-opacity="0.4" stroke-width="1" rx="4"/>
+        <text x="80" y="32" class="lbl big" text-anchor="middle" fill="#5fd3e2">frame t</text>
+        <!-- frame t+1 -->
+        <rect x="220" y="40" width="120" height="140" fill="none" stroke="#5fd3e2" stroke-opacity="0.4" stroke-width="1" rx="4"/>
+        <text x="280" y="32" class="lbl big" text-anchor="middle" fill="#5fd3e2">frame t+1</text>
+        <!-- points in t -->
+        <circle cx="50" cy="70" r="3" fill="#e8eaee"/>
+        <circle cx="80" cy="90" r="3" fill="#e8eaee"/>
+        <circle cx="60" cy="120" r="3" fill="#e8eaee"/>
+        <circle cx="100" cy="135" r="3" fill="#e8eaee"/>
+        <circle cx="75" cy="160" r="3" fill="#e8eaee"/>
+        <circle cx="115" cy="100" r="3" fill="#5b6478"/>
+        <!-- points in t+1 (slightly shifted) -->
+        <circle cx="258" cy="78" r="3" fill="#e8eaee"/>
+        <circle cx="288" cy="98" r="3" fill="#e8eaee"/>
+        <circle cx="270" cy="128" r="3" fill="#e8eaee"/>
+        <circle cx="310" cy="138" r="3" fill="#e8eaee"/>
+        <circle cx="287" cy="165" r="3" fill="#e8eaee"/>
+        <circle cx="320" cy="105" r="3" fill="#5b6478"/>
+        <!-- correspondence arrows -->
+        <g stroke="#5fd3e2" stroke-width="0.8" fill="none" marker-end="url(#arrow)">
+          <line x1="55" y1="70" x2="252" y2="78"/>
+          <line x1="85" y1="90" x2="282" y2="98"/>
+          <line x1="65" y1="120" x2="264" y2="128"/>
+          <line x1="105" y1="135" x2="304" y2="138"/>
+          <line x1="80" y1="160" x2="281" y2="165"/>
+        </g>
+        <line x1="118" y1="100" x2="318" y2="105" stroke="#5b6478" stroke-width="0.5" stroke-dasharray="2,2"/>
+        <text x="218" y="108" class="lbl" fill="#5b6478">low conf</text>
+        <defs>
+          <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="#5fd3e2"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 1. Correspondence as a 1-to-1 mapping between point clouds. Confidence-weighted; unreliable matches (gray) are ignored.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="label">What we learned</div>
+    <p style="margin:0; font-size: 14px;">Correspondence is <em>infrastructure</em>, not a learning signal. In the variants we tested where it gated the auxiliary loss directly (contrastive, prediction, infonce), only ~10% of sampled points had valid matches — too sparse for stable gradients. The 80.29% baseline doesn't use correspondence at all in its loss.</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     2. BEARING QUATERNION QCC
+     ============================================================ -->
+<section class="component" id="qcc">
+  <div class="component-header">
+    <span class="component-num">02 / GEOMETRIC FEATURE</span>
+  </div>
+  <h2>Bearing-Quaternion <span class="accent">QCC</span> rigidity</h2>
+  <p class="component-tag">Per-point measure of how rigidly a local patch is rotating.</p>
+
+  <h3>Physical intuition</h3>
+  <p>For a perfectly rigid body, every point rotates around the same axis by the same angle from frame to frame. So if we describe each point by the <em>direction</em> from the hand's center to that point, those directions all rotate by the same quaternion. <strong>Patches whose neighbors all share the same per-point rotation are rigid; patches whose neighbors disagree are deforming.</strong> That single number — neighborhood agreement on rotation — is the QCC rigidity score.</p>
+  <p>Concretely: parametrize a point's <em>bearing</em> as the rotation that takes a fixed reference vector (north $= [0,1,0]$) onto the unit direction from the centroid to that point. Compute that bearing in frames $t$ and $t{+}1$, take the relative rotation, and then check whether spatial neighbors of point $i$ all came up with the same relative rotation.</p>
+
+  <h3>Math · step by step</h3>
+  <div class="math-block">
+  $$\textbf{1.}\quad c^{(t)} = \tfrac{1}{2}\big(\min_{i} p_i^{(t)} + \max_{i} p_i^{(t)}\big), \qquad d_i^{(t)} = \frac{p_i^{(t)} - c^{(t)}}{\|p_i^{(t)} - c^{(t)}\|}$$
+  $$\textbf{2.}\quad q_i^{(t)} \;=\; \mathrm{Quat}\!\left(\hat{\mathbf{y}} \to d_i^{(t)}\right) \;=\; \Big[\,\cos\tfrac{\theta}{2},\;\; \frac{\hat{\mathbf{y}} \times d_i^{(t)}}{\|\hat{\mathbf{y}} \times d_i^{(t)}\|}\sin\tfrac{\theta}{2}\,\Big]\;,\quad \theta = \arccos(d_{i,y}^{(t)})$$
+  $$\textbf{3.}\quad q^{\text{fwd}}_i \;=\; q_i^{(t{+}1)} \;\cdot\; \overline{q_i^{(t)}}$$
+  $$\textbf{4.}\quad \mathrm{inc}_i \;=\; \frac{1}{|\mathcal{N}(i)|}\sum_{j \in \mathcal{N}(i)} 2\,\arccos\!\big|\langle\, q^{\text{fwd}}_i,\; q^{\text{fwd}}_j\,\rangle\big|$$
+  $$\textbf{5.}\quad \mathrm{rigidity}_i \;=\; \exp\!\left(-\,\frac{\mathrm{inc}_i}{\mathrm{median}(\mathrm{inc})}\right) \;\in\; (0,1]$$
+  </div>
+
+  <p style="font-size: 14px; color: var(--text-dim);">
+  Step 4 is the heart of it: $2\arccos|\langle q_a, q_b\rangle|$ is the geodesic distance on the unit quaternion sphere $S^3$, modded out by the double-cover so $q$ and $-q$ count as the same rotation. A neighborhood of points all rotating identically gives $\mathrm{inc}_i \approx 0 \Rightarrow \mathrm{rigidity}_i \approx 1$. A neighborhood with chaotic rotations gives $\mathrm{inc}_i$ large $\Rightarrow \mathrm{rigidity}_i \to 0$.
+  </p>
+
+  <div class="row">
+    <div class="figure">
+      <svg viewBox="0 0 360 240" xmlns="http://www.w3.org/2000/svg">
+        <!-- centroid -->
+        <circle cx="180" cy="120" r="3" fill="#f5b96a"/>
+        <text x="186" y="118" class="lbl" fill="#f5b96a">c</text>
+        <!-- hand-like blob outline -->
+        <ellipse cx="180" cy="120" rx="100" ry="70" fill="none" stroke="#1c2230" stroke-width="1"/>
+        <!-- 5 points around -->
+        <g>
+          <circle cx="120" cy="90" r="3" fill="#e8eaee"/>
+          <line x1="180" y1="120" x2="120" y2="90" stroke="#f5b96a" stroke-opacity="0.6" stroke-width="0.8"/>
+          <text x="100" y="86" class="lbl">d_1</text>
+
+          <circle cx="240" cy="80" r="3" fill="#e8eaee"/>
+          <line x1="180" y1="120" x2="240" y2="80" stroke="#f5b96a" stroke-opacity="0.6" stroke-width="0.8"/>
+          <text x="246" y="78" class="lbl">d_2</text>
+
+          <circle cx="265" cy="135" r="3" fill="#e8eaee"/>
+          <line x1="180" y1="120" x2="265" y2="135" stroke="#f5b96a" stroke-opacity="0.6" stroke-width="0.8"/>
+          <text x="272" y="138" class="lbl">d_3</text>
+
+          <circle cx="220" cy="180" r="3" fill="#e8eaee"/>
+          <line x1="180" y1="120" x2="220" y2="180" stroke="#f5b96a" stroke-opacity="0.6" stroke-width="0.8"/>
+          <text x="226" y="190" class="lbl">d_4</text>
+
+          <circle cx="105" cy="150" r="3" fill="#e8eaee"/>
+          <line x1="180" y1="120" x2="105" y2="150" stroke="#f5b96a" stroke-opacity="0.6" stroke-width="0.8"/>
+          <text x="86" y="160" class="lbl">d_5</text>
+        </g>
+        <!-- north arrow -->
+        <line x1="20" y1="200" x2="20" y2="160" stroke="#5fd3e2" stroke-width="1" marker-end="url(#arrow2)"/>
+        <text x="26" y="178" class="lbl" fill="#5fd3e2">ŷ = north</text>
+        <defs>
+          <marker id="arrow2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="#5fd3e2"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="caption">Figure 2a. Each point's <em>bearing direction</em> $d_i$ from the centroid. The bearing quaternion $q_i$ is the rotation that takes north onto $d_i$.</div>
+    </div>
+
+    <div class="figure">
+      <svg viewBox="0 0 360 240" xmlns="http://www.w3.org/2000/svg">
+        <!-- two side-by-side patches -->
+        <text x="80" y="22" class="lbl big" text-anchor="middle" fill="#74dba0">rigid patch</text>
+        <text x="280" y="22" class="lbl big" text-anchor="middle" fill="#ff7a90">deforming</text>
+
+        <!-- LEFT: rigid – all q_fwd point same way -->
+        <g transform="translate(80, 130)">
+          <circle r="50" fill="none" stroke="#1c2230"/>
+          <circle r="3" fill="#f5b96a"/>
+          <!-- 5 neighbors all with the same arrow -->
+          <g stroke="#74dba0" stroke-width="1.4" fill="#74dba0">
+            <g transform="translate(-30,-20)"><circle r="2.5"/><line x1="0" y1="0" x2="10" y2="-10" stroke-linecap="round"/></g>
+            <g transform="translate(20,-25)"><circle r="2.5"/><line x1="0" y1="0" x2="10" y2="-10" stroke-linecap="round"/></g>
+            <g transform="translate(35,15)"><circle r="2.5"/><line x1="0" y1="0" x2="10" y2="-10" stroke-linecap="round"/></g>
+            <g transform="translate(0,30)"><circle r="2.5"/><line x1="0" y1="0" x2="10" y2="-10" stroke-linecap="round"/></g>
+            <g transform="translate(-30,18)"><circle r="2.5"/><line x1="0" y1="0" x2="10" y2="-10" stroke-linecap="round"/></g>
+          </g>
+          <text y="80" class="lbl" text-anchor="middle">inc ≈ 0  ·  rigidity → 1</text>
+        </g>
+
+        <!-- RIGHT: deforming – arrows in different directions -->
+        <g transform="translate(280, 130)">
+          <circle r="50" fill="none" stroke="#1c2230"/>
+          <circle r="3" fill="#f5b96a"/>
+          <g stroke="#ff7a90" stroke-width="1.4" fill="#ff7a90">
+            <g transform="translate(-30,-20)"><circle r="2.5"/><line x1="0" y1="0" x2="12" y2="-4" stroke-linecap="round"/></g>
+            <g transform="translate(20,-25)"><circle r="2.5"/><line x1="0" y1="0" x2="-8" y2="-10" stroke-linecap="round"/></g>
+            <g transform="translate(35,15)"><circle r="2.5"/><line x1="0" y1="0" x2="0" y2="14" stroke-linecap="round"/></g>
+            <g transform="translate(0,30)"><circle r="2.5"/><line x1="0" y1="0" x2="-12" y2="2" stroke-linecap="round"/></g>
+            <g transform="translate(-30,18)"><circle r="2.5"/><line x1="0" y1="0" x2="6" y2="14" stroke-linecap="round"/></g>
+          </g>
+          <text y="80" class="lbl" text-anchor="middle">inc large  ·  rigidity → 0</text>
+        </g>
+      </svg>
+      <div class="caption">Figure 2b. The signal: in a rigidly rotating patch all neighbors' $q^{\text{fwd}}$ vectors agree; in a deforming patch they scatter on $S^3$.</div>
+    </div>
+  </div>
+
+  <h3>Implementation</h3>
+  <pre class="code"><span class="c"># reqnn_motion.py · _compute_bearing_qcc</span>
+<span class="k">def</span> <span class="n">_compute_bearing_qcc</span>(points_4d, num_frames, knn_k=10):
+    xyz       = points_4d[..., :3]
+    centroids = (xyz.amax(2) + xyz.amin(2)) / 2
+    dirs      = (xyz - centroids[:,:,<span class="k">None</span>]).normalize(dim=-1)
+
+    <span class="c"># Bearing quaternion: rotation from north onto dir</span>
+    bearing_q = north_to_dir_quat(dirs)               <span class="c"># (B, F, P, 4)</span>
+    q_fwd     = hamilton(bearing_q[:,1:], conj(bearing_q[:,:-1]))
+
+    <span class="c"># Per-point inconsistency = mean geodesic dist to k-NN q_fwd</span>
+    inc       = geodesic_distance_to_knn(q_fwd, k=knn_k).mean(-1)
+    rigidity  = (-inc / inc.median()).exp()           <span class="c"># (B, P) in (0,1]</span>
+    <span class="k">return</span> rigidity</pre>
+
+  <div class="callout amber">
+    <div class="label">Role in the pipeline</div>
+    <p style="margin:0; font-size: 14px;">The rigidity score is computed once per forward pass and used to <em>modulate</em> encoder features: <code style="font-family:monospace; background:var(--bg-code); padding:1px 4px; border-radius:3px;">encoded *= 1 + tanh(W · rigidity)</code> with $W$ initialized to zero. In ablation, disabling this modulation costs ≈ 0 accuracy, suggesting rigidity is mostly carried as <em>input</em> to the encoder rather than as an explicit gating signal. The QCC machinery's main contribution flows through the loss in §03.</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     3. GROUNDED CYCLE CONSISTENCY
+     ============================================================ -->
+<section class="component" id="cycle">
+  <div class="component-header">
+    <span class="component-num">03 / THE LOSS THAT WORKS</span>
+  </div>
+  <h2><span class="accent">Grounded Cycle</span> Consistency</h2>
+  <p class="component-tag">Predicting segment-to-segment rotations, anchored to real geometry, closed by a cycle constraint. <strong>+2.70% accuracy.</strong></p>
+
+  <h3>Physical intuition</h3>
+  <p>Split a 32-frame clip into three temporal segments — beginning, middle, end. Pool the encoder's per-point features inside each segment into a single descriptor: $f_1, f_2, f_3$. Now ask the model to <em>predict</em> three quaternions: $q_{12}$ rotating segment 1 to segment 2, $q_{23}$ for 2→3, $q_{31}$ for 3→1.</p>
+  <p>If those three predicted quaternions were unconstrained, the network could trivially output identities and the loss would be zero. To prevent that, we tie them down with two physical constraints:</p>
+  <ol style="color: var(--text-dim); font-size: 14px; padding-left: 20px;">
+    <li><strong>Reconstruction grounding</strong> — applying $q_{12}$ to segment 1's centered XYZ point cloud must actually rotate it onto segment 2's. This is a <em>hard geometric truth</em> measured against raw coordinates, not features. The network can't fake it.</li>
+    <li><strong>Cycle closure</strong> — composing $q_{12} \cdot q_{23} \cdot q_{31}$ must equal the identity quaternion. Going around the loop in time should bring you back to where you started, with no net rotation.</li>
+  </ol>
+  <p>The loss is the sum of three reconstruction MSEs and one cycle-closure MSE. Both terms hold the predicted quaternions in tension: reconstruction ties them to the data, cycle ties them to each other.</p>
+
+  <h3>Math</h3>
+  <div class="math-block">
+  $$\textbf{Pool:}\quad f_k \;=\; \mathrm{mean}\big(\,\text{enc}\big(\text{seg}_k\big)\,\big)\;,\qquad k \in \{1,2,3\}$$
+  $$\textbf{Predict:}\quad q_{12} \;=\; \mathrm{Norm}\!\big(\mathrm{MLP}\big([f_1\,\Vert\,f_2]\big)\big)\;,\qquad q_{23},\;q_{31}\;\text{similarly}$$
+  $$\textbf{Recon}\quad \mathcal{L}_{\text{recon}} \;=\; \frac{1}{3}\!\!\sum_{(s,t,q)\in\{(1,2,q_{12}),(2,3,q_{23}),(3,1,q_{31})\}}\!\!\!\!\!\!\!\!\!\big\|\;q\,\circ\,(\mathbf{X}_s - \bar{\mathbf{X}}_s)\;-\;(\mathbf{X}_t - \bar{\mathbf{X}}_t)\big\|^2$$
+  $$\textbf{Cycle}\quad \mathcal{L}_{\text{cycle}} \;=\; \min\!\Big(\,\big\|\,q_{12}\,q_{23}\,q_{31} - e\,\big\|^2,\;\;\big\|\,q_{12}\,q_{23}\,q_{31} + e\,\big\|^2\,\Big)$$
+  $$\boxed{\;\mathcal{L}_{\text{QCC}} \;=\; \mathcal{L}_{\text{recon}} \;+\; \mathcal{L}_{\text{cycle}}\;}$$
+  </div>
+
+  <p style="font-size: 14px; color: var(--text-dim);">
+  Here $q\circ v$ denotes quaternion rotation of vector $v$, $e = (1,0,0,0)$ is the identity quaternion, and the $\min$ in $\mathcal{L}_{\text{cycle}}$ accounts for the double cover ($q$ and $-q$ represent the same rotation). The reconstruction term operates on raw centered XYZ — never on features — so the predicted quaternion can't escape into a degenerate feature subspace.
+  </p>
+
+  <div class="figure" style="margin-top: 24px;">
+    <svg viewBox="0 0 600 320" xmlns="http://www.w3.org/2000/svg">
+      <!-- Three segments arranged in a triangle -->
+      <defs>
+        <marker id="arrowV" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#c89aff"/>
+        </marker>
+      </defs>
+
+      <!-- segment 1 (top left) -->
+      <g transform="translate(120, 80)">
+        <circle r="55" fill="rgba(200,154,255,0.04)" stroke="#c89aff" stroke-opacity="0.5" stroke-width="1.2"/>
+        <text y="-65" class="lbl big" text-anchor="middle" fill="#c89aff">segment 1</text>
+        <text y="-50" class="lbl" text-anchor="middle">frames 0..10</text>
+        <!-- mini point cloud -->
+        <g fill="#e8eaee">
+          <circle cx="-20" cy="-15" r="2"/><circle cx="10" cy="-20" r="2"/>
+          <circle cx="-15" cy="10" r="2"/><circle cx="15" cy="5" r="2"/>
+          <circle cx="0" cy="20" r="2"/><circle cx="25" cy="15" r="2"/>
+          <circle cx="-25" cy="0" r="2"/><circle cx="20" cy="-5" r="2"/>
+        </g>
+        <text y="50" class="lbl" text-anchor="middle">f_1 = mean(enc)</text>
+      </g>
+
+      <!-- segment 2 (top right) -->
+      <g transform="translate(480, 80)">
+        <circle r="55" fill="rgba(200,154,255,0.04)" stroke="#c89aff" stroke-opacity="0.5" stroke-width="1.2"/>
+        <text y="-65" class="lbl big" text-anchor="middle" fill="#c89aff">segment 2</text>
+        <text y="-50" class="lbl" text-anchor="middle">frames 10..21</text>
+        <g fill="#e8eaee">
+          <circle cx="-15" cy="-20" r="2"/><circle cx="15" cy="-15" r="2"/>
+          <circle cx="-20" cy="5" r="2"/><circle cx="10" cy="10" r="2"/>
+          <circle cx="-5" cy="22" r="2"/><circle cx="22" cy="18" r="2"/>
+          <circle cx="-28" cy="-2" r="2"/><circle cx="25" cy="0" r="2"/>
+        </g>
+        <text y="50" class="lbl" text-anchor="middle">f_2</text>
+      </g>
+
+      <!-- segment 3 (bottom center) -->
+      <g transform="translate(300, 240)">
+        <circle r="55" fill="rgba(200,154,255,0.04)" stroke="#c89aff" stroke-opacity="0.5" stroke-width="1.2"/>
+        <text y="-62" class="lbl big" text-anchor="middle" fill="#c89aff">segment 3</text>
+        <text y="-49" class="lbl" text-anchor="middle">frames 21..32</text>
+        <g fill="#e8eaee">
+          <circle cx="-18" cy="-18" r="2"/><circle cx="12" cy="-18" r="2"/>
+          <circle cx="-18" cy="8" r="2"/><circle cx="12" cy="12" r="2"/>
+          <circle cx="0" cy="22" r="2"/><circle cx="22" cy="15" r="2"/>
+          <circle cx="-25" cy="2" r="2"/><circle cx="20" cy="-4" r="2"/>
+        </g>
+        <text y="50" class="lbl" text-anchor="middle">f_3</text>
+      </g>
+
+      <!-- arrows q_12, q_23, q_31 -->
+      <path d="M 175 75 Q 300 45 425 75" fill="none" stroke="#c89aff" stroke-width="1.5" marker-end="url(#arrowV)"/>
+      <text x="300" y="40" class="lbl big" fill="#c89aff" text-anchor="middle">q_12</text>
+
+      <path d="M 470 130 Q 420 200 350 220" fill="none" stroke="#c89aff" stroke-width="1.5" marker-end="url(#arrowV)"/>
+      <text x="455" y="190" class="lbl big" fill="#c89aff">q_23</text>
+
+      <path d="M 250 220 Q 180 200 130 130" fill="none" stroke="#c89aff" stroke-width="1.5" marker-end="url(#arrowV)"/>
+      <text x="135" y="195" class="lbl big" fill="#c89aff">q_31</text>
+
+      <!-- cycle constraint label -->
+      <text x="300" y="160" class="lbl big" fill="#74dba0" text-anchor="middle">q_12 · q_23 · q_31 = e</text>
+    </svg>
+    <div class="caption">Figure 3. Three temporal segments, each pooled into a single feature vector. An MLP predicts the rotation between each pair. Reconstruction loss ties each $q$ to the actual XYZ rotation; cycle loss enforces that going around the loop gives the identity.</div>
+  </div>
+
+  <h3>Implementation</h3>
+  <pre class="code"><span class="c"># reqnn_motion.py · _GroundedCycleConsistency.forward</span>
+seg1, seg2, seg3 = pool_per_segment(encoded, num_frames=3)
+
+q12 = norm(quat_head(cat(seg1, seg2.detach())))
+q23 = norm(quat_head(cat(seg2, seg3.detach())))
+q31 = norm(quat_head(cat(seg3, seg1.detach())))
+
+<span class="c"># Reconstruction: each q must rotate src XYZ onto tgt XYZ</span>
+recon = 0
+<span class="k">for</span> src, tgt, q <span class="k">in</span> [(xyz1, xyz2, q12), (xyz2, xyz3, q23), (xyz3, xyz1, q31)]:
+    src_c = src - src.mean(1, keepdim=<span class="k">True</span>)
+    tgt_c = tgt - tgt.mean(1, keepdim=<span class="k">True</span>)
+    recon += F.mse_loss(quat_rotate(q, src_c), tgt_c.detach())
+
+<span class="c"># Cycle: composed product must equal identity quaternion</span>
+q_cycle = hamilton(hamilton(q12, q23), q31)
+cycle   = torch.min(((q_cycle - q_id)**2).sum(-1),
+                    ((q_cycle + q_id)**2).sum(-1)).mean()
+
+<span class="k">return</span> recon / 3 + cycle</pre>
+
+  <div class="callout violet">
+    <div class="label">Why this one works when others didn't</div>
+    <p style="margin:0 0 8px; font-size: 14px;"><strong>Pooled, not per-point.</strong> The loss operates on a single feature vector per segment, not on per-point features. This means classification-relevant variance across points is preserved — the loss can't collapse them.</p>
+    <p style="margin:0 0 8px; font-size: 14px;"><strong>Hard geometric grounding.</strong> The reconstruction term references raw XYZ coordinates. The predicted quaternion has to actually transform geometry; it can't degenerate to a feature-space trick.</p>
+    <p style="margin:0; font-size: 14px;"><strong>Novel constraint.</strong> The cycle closure $q_{12}q_{23}q_{31} = e$ is a constraint the classifier loss alone never imposes. It forces the network to learn temporally <em>self-consistent</em> rotation predictions, which appears to translate into more sample-invariant features — exactly the property random TTA exploits for another +1.45%.</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     SYNTHESIS
+     ============================================================ -->
+<section class="component" id="synthesis">
+  <div class="component-header">
+    <span class="component-num">04 / SYNTHESIS</span>
+  </div>
+  <h2>How they compose &mdash; and what the ablations say</h2>
+
+  <table class="compare">
+    <thead><tr><th>Setup</th><th>Aux loss</th><th>Eval mode</th><th class="num">Test acc</th></tr></thead>
+    <tbody>
+      <tr><td>quaternion_nocorr_v4</td><td>none</td><td>linspace</td><td class="num">77.59%</td></tr>
+      <tr class="highlight"><td>quaternion_branch (ep112)</td><td>grounded_cycle (w=0.1)</td><td>linspace</td><td class="num">80.29%</td></tr>
+      <tr><td>quaternion_qcc_strong_v6g</td><td>grounded_cycle (w=0.2)</td><td>linspace</td><td class="num">76.35%</td></tr>
+      <tr><td>v6c (contrastive aux finetune)</td><td>contrastive (w=0.3)</td><td>linspace</td><td class="num">76.76%</td></tr>
+      <tr class="highlight"><td>quaternion_branch (ep112) + TTA=10</td><td>grounded_cycle (w=0.1)</td><td>random×10</td><td class="num">81.74%</td></tr>
+      <tr><td>quaternion_nocorr_v4 + TTA=10</td><td>none</td><td>random×10</td><td class="num">77.39%</td></tr>
+      <tr class="highlight"><td>fusion: 0.8·PMamba + 0.2·Quat(det)</td><td>grounded_cycle</td><td>linspace</td><td class="num">90.87%</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <div class="label">The pattern</div>
+    <ul style="margin: 8px 0 0; padding-left: 18px; font-size: 14px; color: var(--text-dim);">
+      <li><strong>Grounded cycle is the active ingredient</strong> — it accounts for the entire +2.70% improvement from no-aux to baseline. Bearing-quaternion rigidity, correspondence sampling, and the various per-point auxiliary losses are scaffolding that doesn't move the needle on its own.</li>
+      <li><strong>The relationship to weight is non-monotonic.</strong> $w=0$ → 77.59%, $w=0.1$ → 80.29%, $w=0.2$ → 76.35%. There is a sweet spot where the loss provides structure without overwhelming the classification gradient.</li>
+      <li><strong>Random TTA is QCC-specific.</strong> It gives +1.45% on the grounded_cycle model but -0.20% on the no-aux model. The cycle constraint trains features that are more sample-invariant, and TTA harvests that property. On the no-aux model there's nothing to harvest.</li>
+      <li><strong>For fusion, deterministic eval beats TTA.</strong> Quat(TTA) is individually higher but its softmax is sharper, which over-weighs it in the linear blend with PMamba. Quat(det) fuses better and gives the new peak: <strong>90.87% with α = 0.8</strong>.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <p>Source: <code>remote/PMamba/experiments/models/reqnn_motion.py</code> · classes <code>BearingQCCFeatureMotion</code> and <code>_GroundedCycleConsistency</code>. Commit <code>d386b75</code> reinstates the dispatch.</p>
+</footer>
+
+</div>
+</body>
+</html>

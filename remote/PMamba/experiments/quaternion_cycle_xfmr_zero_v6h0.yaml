@@ -1,0 +1,68 @@
+# Exp 6h0: SANITY CHECK — transformer cycle module instantiated but qcc_weight=0
+# Purpose: isolate whether the transformer cycle module's MERE PRESENCE in the
+# model breaks training (e.g. via initialization), or whether it's specifically
+# the gradient flow from the aux loss back into the encoder.
+#
+# If this hits ~77.59% (no-aux baseline) -> the issue is gradient magnitude
+# from the transformer cycle, fix by lowering qcc_weight or scaling grads.
+# If this also collapses -> something deeper is wrong (model loading, BN,...).
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 30
+work_dir: ./work_dir/quaternion_cycle_xfmr_zero_v6h0/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 10
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 20
+  - 25
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.0
+  qcc_variant: grounded_cycle
+  cycle_module_type: transformer
+  num_cycle_segments: 3
+  cycle_n_layers: 2
+  cycle_n_heads: 4

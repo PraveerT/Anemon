@@ -1,0 +1,71 @@
+# Exp 6k: FAIR BASELINE — quaternion.yaml recipe but FROM SCRATCH (no preload)
+# Purpose: settle the question of whether the 80.29% baseline's edge came
+# from the QCC loss or from the pretraining advantage.
+#
+# quaternion_branch (80.29%) was loaded from epoch110_model.pt (cls loss
+# starts at 1.13, well below random 3.22 -> definitely preloaded).
+# nocorr_v4    (77.59%, no aux) was from scratch (cls loss starts at 4.14).
+# This is an apples-to-oranges comparison.
+#
+# v6k uses the EXACT original recipe (shallow MLP cycle, N=3, qcc_weight=0.1)
+# but starts from random init.  This gives the true fair-comparison number.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_fair_baseline_v6k/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+# NO `weights` field — random initialization
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.1
+  qcc_variant: grounded_cycle
+  # cycle_module_type defaults to 'mlp' -> _GroundedCycleConsistency
+  # (the original 3-segment shallow MLP that produced 80.29%)
