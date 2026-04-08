@@ -1,0 +1,77 @@
+# Exp 6s: Depth-2 warm restart on the v6p chain (apples-to-apples vs v6L)
+#
+# Compact name:
+#   P[P[Sc_Co_pr01_N3_e140]E135_Co_pr01_N3_e140]E125_Co_pr01_N3_e140
+#
+# Tests whether v6L's edge over corr_fixed_finetune comes from chain depth
+# alone or from the recipe switch (Co_pr01 -> Nc_gc01).
+#
+# This run mirrors v6L's structure but stays on the SAME Co_pr01 recipe
+# throughout the chain instead of switching to grounded_cycle.
+#
+# Lineage:
+#   v6p (Sc_Co_pr01_N3_e140, peak 76.14%)
+#     -> v6r (P[..]E135_Co_pr01_N3_e140, peak 79.05% at ep121/125)
+#         -> v6s (load v6r/ep125, same Co_pr01 recipe, 140 ep)
+#
+# Compare against v6L (81.33%, depth-2 with recipe switch). If v6s lands
+# in the 80-81% range, chain depth is the active ingredient. If it stalls
+# near 79-80%, the recipe switch is what mattered.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_v6r_warmrestart_v6s/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 1
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+weights: ./work_dir/quaternion_v6p_warmrestart_v6r/epoch125_model.pt
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.1
+  qcc_variant: prediction
