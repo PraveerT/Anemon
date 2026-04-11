@@ -137,6 +137,7 @@ For preloaded runs the parent's full description is nested in `[...]` recursivel
 | `Nc` | `return_correspondence: false` (no correspondence data loaded) |
 | `Co` | `return_correspondence: true` (correspondence data loaded) |
 | `none` | `qcc_weight: 0` (no auxiliary loss) |
+| `ri` | rigidity-as-input: bearing QCC rigidity concatenated as 5th channel (x,y,z,intensity,**rigidity**). Model: `reqnn_rigidity_input.RigidityInputMotion`. No aux loss, no modulation. |
 | `gc<w>` | grounded_cycle aux, weight (e.g. `gc01`=0.1, `gc02`=0.2, `gc002`=0.02) |
 | `pr<w>` | prediction aux, weight |
 | `co<w>` | contrastive aux, weight |

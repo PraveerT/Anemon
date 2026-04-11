@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quaternion experiment families</title>
+<style>
+  :root {
+    --bg: #0b0e17;
+    --bg-card: #11151f;
+    --bg-row: #0e1320;
+    --bg-row-alt: #131927;
+    --bg-code: #060810;
+    --border: #1c2230;
+    --border-strong: #2a3244;
+    --text: #e8eaee;
+    --text-dim: #8b94a6;
+    --text-faint: #5b6478;
+    --accent-cyan: #5fd3e2;
+    --accent-amber: #f5b96a;
+    --accent-violet: #c89aff;
+    --accent-rose: #ff7a90;
+    --positive: #74dba0;
+    --warn: #f59f6a;
+    --bad: #ff7a90;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Inter", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-image:
+      radial-gradient(ellipse 800px 600px at 20% 0%, rgba(95,211,226,0.05), transparent),
+      radial-gradient(ellipse 600px 400px at 80% 30%, rgba(200,154,255,0.04), transparent),
+      radial-gradient(ellipse 700px 500px at 50% 80%, rgba(245,185,106,0.03), transparent);
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 48px 28px 96px; }
+
+  header { margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid var(--border); }
+  .eyebrow {
+    display: inline-block;
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+    background: rgba(95, 211, 226, 0.08);
+    border: 1px solid rgba(95, 211, 226, 0.25);
+    padding: 5px 11px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-size: 38px;
+    line-height: 1.1;
+    margin: 0 0 12px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .lede {
+    font-size: 17px;
+    color: var(--text-dim);
+    max-width: 760px;
+    margin: 0;
+  }
+
+  section { margin-top: 56px; }
+  h2 {
+    font-size: 22px;
+    margin: 0 0 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-faint);
+    margin: 28px 0 10px;
+    font-weight: 600;
+  }
+
+  /* Definition box */
+  .def {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-cyan);
+    border-radius: 6px;
+    padding: 18px 24px;
+    margin: 20px 0;
+  }
+  .def .label {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+  .def p { margin: 6px 0; }
+  .def code { color: var(--accent-cyan); }
+
+  /* Token grid */
+  .tokens {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 18px 0;
+  }
+  .token {
+    background: var(--bg-card);
+    padding: 12px 16px;
+  }
+  .token .key {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    color: var(--accent-amber);
+  }
+  .token .desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Families table */
+  table.families {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 16px 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  table.families thead th {
+    background: var(--bg-row-alt);
+    color: var(--text-faint);
+    text-align: left;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    padding: 12px 16px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  table.families tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.families tbody tr:nth-child(even) td { background: var(--bg-row-alt); }
+  table.families tbody tr:hover td { background: rgba(95,211,226,0.04); }
+  table.families tbody tr:last-child td { border-bottom: none; }
+
+  .family-code {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--accent-cyan);
+    word-break: break-all;
+  }
+  .run {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .run-id {
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+  .acc { color: var(--text); font-weight: 500; }
+  .acc.peak { color: var(--positive); font-weight: 600; }
+  .acc.bad  { color: var(--bad); }
+  .acc.warn { color: var(--warn); }
+  .running { color: var(--accent-amber); font-style: italic; }
+  .empty { color: var(--text-faint); }
+
+  /* Highlight rows */
+  tr.highlight td { background: rgba(116, 219, 160, 0.05) !important; }
+  tr.highlight td.first { border-left: 2px solid var(--positive); }
+
+  /* Lineage diagrams */
+  .chain {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 14px 0;
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-dim);
+    overflow-x: auto;
+  }
+  .chain .sc { color: var(--accent-cyan); }
+  .chain .d1 { color: var(--accent-amber); }
+  .chain .d2 { color: var(--accent-violet); }
+  .chain .arrow { color: var(--text-faint); }
+  .chain .acc { color: var(--positive); }
+
+  footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">PMamba quaternion branch</span>
+  <h1>Experiment families</h1>
+  <p class="lede">Every quaternion run is identified by a recursive compact name. A <strong>family</strong> is its depth-0 model code: any chain that roots at the same depth-0 token string belongs to the same family, regardless of what happens at deeper levels.</p>
+</header>
+
+<section>
+  <h2>What is a family</h2>
+  <div class="def">
+    <div class="label">Definition</div>
+    <p>A <strong>family</strong> is defined by its depth-0 model code. Two runs belong to the same family if and only if their depth-0 root has the same compact name. <em>The family identifier IS the depth-0 token string.</em></p>
+    <p style="color: var(--text-dim);">Example: v6p, v6r, v6s all share family <code>Sc_Co_pr01_N3_pts48-256_e140</code> &mdash; they're three depths of the same family. v6r is preloaded from v6p, v6s from v6r, but the family code stays fixed at the depth-0 root.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Naming convention</h2>
+  <p style="color: var(--text-dim);">Compact format: <code style="color: var(--accent-cyan); font-family: monospace;">&lt;preload&gt;_&lt;corr&gt;_&lt;aux&gt;_&lt;segments&gt;_&lt;pts&gt;_&lt;epochs&gt;</code></p>
+
+  <div class="tokens">
+    <div class="token">
+      <div class="key">Sc</div>
+      <div class="desc">From scratch (random init)</div>
+    </div>
+    <div class="token">
+      <div class="key">P[&lt;parent&gt;]E&lt;n&gt;</div>
+      <div class="desc">Preloaded from <code>&lt;parent&gt;</code> at epoch <code>n</code> (recursive)</div>
+    </div>
+    <div class="token">
+      <div class="key">Nc / Co</div>
+      <div class="desc">no correspondence loaded / correspondence loaded</div>
+    </div>
+    <div class="token">
+      <div class="key">none / gc&lt;w&gt; / pr&lt;w&gt; / co&lt;w&gt;</div>
+      <div class="desc">aux loss type and weight (e.g. <code>gc01</code>=0.1, <code>gc02</code>=0.2)</div>
+    </div>
+    <div class="token">
+      <div class="key">pr&lt;w&gt;_gc&lt;w&gt;</div>
+      <div class="desc">Stacked aux losses (any combination)</div>
+    </div>
+    <div class="token">
+      <div class="key">-D / -XF</div>
+      <div class="desc">Cycle module variant: deep_mlp / transformer</div>
+    </div>
+    <div class="token">
+      <div class="key">N&lt;n&gt;</div>
+      <div class="desc">num_cycle_segments (only meaningful for grounded_cycle)</div>
+    </div>
+    <div class="token">
+      <div class="key">pts&lt;a&gt;-&lt;b&gt; / pts&lt;n&gt;</div>
+      <div class="desc">Dynamic ramp <code>a</code>&rarr;<code>b</code> / static <code>n</code></div>
+    </div>
+    <div class="token">
+      <div class="key">e&lt;n&gt;</div>
+      <div class="desc">num_epoch</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Families overview</h2>
+  <p style="color: var(--text-dim);">12 families found. Each row is one family (= one depth-0 root). Multiple runs in a family share the same depth-0 token string.</p>
+
+  <table class="families">
+    <thead>
+      <tr>
+        <th style="width: 32%;">Family code (= depth-0 token)</th>
+        <th style="width: 18%;">Depth 0</th>
+        <th style="width: 28%;">Depth 1</th>
+        <th style="width: 22%;">Depth 2</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <tr class="highlight">
+        <td class="first"><span class="family-code">Sc_Co_pr01_N3_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">prediction aux 0.1, with correspondence, 140 epochs &mdash; the cleanest depth-0/1/2 chain we have</span></td>
+        <td>
+          <span class="run">v6p</span><br>
+          <span class="acc">76.14%</span>
+        </td>
+        <td>
+          <span class="run">v6r</span> &nbsp; <span class="run-id">P[v6p]E135</span><br>
+          <span class="acc peak">79.05%</span>
+        </td>
+        <td>
+          <span class="run">v6s</span> &nbsp; <span class="run-id">P[v6r]E125</span><br>
+          <span class="acc peak">80.91%</span>
+        </td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_none_pts48-256_e250</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">no aux loss, no correspondence, 250 epochs &mdash; deepest mid-training reservoir; spawns the v6L hybrid chain</span></td>
+        <td>
+          <span class="run">nocorr_v4</span><br>
+          <span class="acc">77.59%</span>
+        </td>
+        <td>
+          <span class="run">v6b</span> 78.01%<br>
+          <span class="run">v6a</span> 78.22% <span class="run-id">+noRig</span><br>
+          <span class="run">corr_fixed_finetune</span> 79.88% <span class="run-id">recipe-switch</span><br>
+          <span class="run">v6n</span> 78.01% <span class="run-id">killed early</span>
+        </td>
+        <td>
+          <span class="run">v6L</span> &nbsp; <span class="run-id">via corr_fixed</span><br>
+          <span class="acc peak">81.33%</span> <span class="run-id">single-epoch</span>
+        </td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_gc01_N3_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">grounded_cycle 0.1, no corr &mdash; the original 80.29% recipe, fair-baseline version</span></td>
+        <td>
+          <span class="run">v6k</span><br>
+          <span class="acc">76.14%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_gc02_N3_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">grounded_cycle 0.2 &mdash; doubled qcc weight, sweet-spot test</span></td>
+        <td>
+          <span class="run">v6g</span><br>
+          <span class="acc">76.35%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_gc01-D_N3_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">grounded_cycle 0.1 with deep_mlp cycle module &mdash; 4-layer MLP head</span></td>
+        <td>
+          <span class="run">v6h3</span><br>
+          <span class="acc bad">75.31%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_gc01-D_N6_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">grounded_cycle deep_mlp, 6 segments</span></td>
+        <td>
+          <span class="run">v6i</span><br>
+          <span class="acc">76.35%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_gc01-D_N9_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">grounded_cycle deep_mlp, 9 segments &mdash; best deep-MLP variant</span></td>
+        <td>
+          <span class="run">v6j</span><br>
+          <span class="acc">76.76%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Nc_gc01-XF_N3_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">grounded_cycle with transformer cycle module &mdash; collapsed at epoch 2</span></td>
+        <td>
+          <span class="run">v6h</span><br>
+          <span class="acc bad">40.04%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Co_none_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">no aux, correspondence loaded but unused &mdash; matched control for v6p</span></td>
+        <td>
+          <span class="run">v6q</span><br>
+          <span class="acc">75.93%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Co_pr01_gc02_N3_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">stacked aux: prediction 0.1 + grounded_cycle 0.2, N=3 &mdash; v7a</span></td>
+        <td>
+          <span class="run">v7a</span><br>
+          <span class="acc">75.93%</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">Sc_Co_pr01_gc02_N24_pts48-256_e140</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">stacked aux at N=24 &mdash; harder cycle constraint, v7b currently running</span></td>
+        <td>
+          <span class="run">v7b</span><br>
+          <span class="running">running</span>
+        </td>
+        <td><span class="empty">&mdash;</span></td>
+        <td><span class="empty">&mdash;</span></td>
+      </tr>
+
+      <tr>
+        <td class="first"><span class="family-code">?</span> &nbsp; <span class="run-id">(unknown depth-0 root)</span><br><span class="run-id" style="margin-top: 4px; display: inline-block;">control rerun overwritten on disk &mdash; lineage lost; documented in BRANCH_QCC_NOTES.md</span></td>
+        <td>
+          <span class="empty">lost</span><br>
+          <span class="run-id">~77.18% est.</span>
+        </td>
+        <td>
+          <span class="run">quaternion_branch</span> &nbsp; <span class="run-id">P[?]E110</span><br>
+          <span class="acc peak">80.29%</span>
+        </td>
+        <td>
+          <span class="run">v6c</span> 79.46% <span class="run-id">co03</span><br>
+          <span class="run">v6d</span> 79.05% <span class="run-id">none</span><br>
+          <span class="run">v6f</span> 79.25% <span class="run-id">gc01</span>
+        </td>
+      </tr>
+
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Chain C &mdash; the only fully clean depth-0/1/2 family</h2>
+  <p style="color: var(--text-dim);">Family <code class="family-code">Sc_Co_pr01_N3_pts48-256_e140</code> is the cleanest evidence we have for the warm-restart mechanism: every parent in the chain is fully traceable, recipe is identical at every depth, peak accuracy gains compound monotonically.</p>
+
+  <div class="chain">
+<span class="sc">Sc_Co_pr01_N3_pts48-256_e140</span>                                                                  <span class="acc">76.14%  (v6p)</span>
+   <span class="arrow">└─E135──→</span> <span class="d1">P[Sc_Co_pr01_N3_pts48-256_e140]E135_Co_pr01_N3_pts48-256_e140</span>                          <span class="acc">79.05%  (v6r)  +2.91%</span>
+              <span class="arrow">└─E125──→</span> <span class="d2">P[P[Sc_Co_pr01_N3_pts48-256_e140]E135_Co_pr01_N3_pts48-256_e140]E125_Co_pr01_N3_pts48-256_e140</span>  <span class="acc">80.91%  (v6s)  +1.86%</span>
+  </div>
+
+  <p style="color: var(--text-dim); font-size: 13px;">Cumulative gain: <strong style="color: var(--positive);">+4.77%</strong> in two warm-restart cycles, with the same recipe at every link.</p>
+</section>
+
+<section>
+  <h2>Family-level findings</h2>
+  <ul style="color: var(--text-dim); padding-left: 20px;">
+    <li><strong>Only one family has full depth-0/1/2 data with a clean lineage</strong>: <code class="family-code">Sc_Co_pr01_N3_pts48-256_e140</code>. This is the strongest evidence for the warm-restart mechanism.</li>
+    <li><strong>From-scratch baselines cluster at 75-77%</strong> regardless of aux loss type. The specific aux variant matters very little at depth 0.</li>
+    <li><strong>The 80%+ ceiling requires either</strong> (a) a multi-depth warm-restart chain, or (b) a preload from another good model. No single-shot from-scratch run cracks 78%.</li>
+    <li><strong>The unknown-root family</strong> (<code class="family-code">?</code> &mdash; quaternion_branch) reaches 80.29% from a lost control rerun. Its depth-2 children (v6c/d/f) all <em>drop</em> by ~1% when restarted from the peak, demonstrating that restarting from a fully-converged checkpoint hurts more than restarting from a mid-training one.</li>
+    <li><strong>Stacking aux losses is statistically tied with single aux at depth 0</strong>: v7a (stacked) ~ v6p (single) ~ v6q (no aux), all within 0.5% of each other.</li>
+  </ul>
+</section>
+
+<footer>
+  Source: <code>quaternion_runs.md</code>, <code>.claude/skills/remote/SKILL.md</code>, work_dirs in <code>remote/PMamba/experiments/work_dir/</code>
+</footer>
+
+</div>
+</body>
+</html>

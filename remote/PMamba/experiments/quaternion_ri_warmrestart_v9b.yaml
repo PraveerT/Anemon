@@ -1,0 +1,63 @@
+# Exp 9b: Rigidity-as-input warm-restart (depth-1 of ri family)
+#
+# Compact name: P[Sc_Nc_ri_pts48-256_e140]E137_Nc_ri_pts48-256_e140
+# Family: Sc_Nc_ri_pts48-256_e140
+#
+# Tests: does rigidity-as-input help warm-restart?
+# Compare v9b vs v8a (no-aux warm-restart = 80.08%).
+# If v9b > 80.08% -> rigidity useful at depth 1.
+# If v9b ~ 80% -> rigidity irrelevant even as input.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_ri_warmrestart_v9b/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 1
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+weights: ./work_dir/quaternion_ri_v9a/epoch137_model.pt
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+
+model: models.reqnn_rigidity_input.RigidityInputMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  bearing_knn_k: 10
