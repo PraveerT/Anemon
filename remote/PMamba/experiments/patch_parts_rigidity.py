@@ -132,20 +132,43 @@ class _PartsRigidityProcrustes(nn.Module):
             D_mat = torch.diag_embed(D_diag)
             R = torch.matmul(V, torch.matmul(D_mat, U.transpose(-1, -2)))  # (B, K, 3, 3)
 
-            pred = torch.einsum("bkij,bkpj->bkpi", R, src_c)
+            # Detach R to avoid differentiable-SVD gradient explosion. The
+            # gradient still reaches the soft-assignment through the w_k
+            # prefactor in the residual, which is the intended signal
+            # ("assign points so that fitted rotations give low residual").
+            R_used = R.detach()
+
+            # Replace any NaN/Inf in R with identity (safety net for rare
+            # degenerate SVD).
+            bad = ~torch.isfinite(R_used).all(dim=-1).all(dim=-1)
+            if bad.any():
+                R_used = torch.where(
+                    bad.unsqueeze(-1).unsqueeze(-1),
+                    I3.expand_as(R_used),
+                    R_used,
+                )
+
+            pred = torch.einsum("bkij,bkpj->bkpi", R_used, src_c)
             residual = ((pred - tgt_c) ** 2).sum(dim=-1)             # (B, K, P)
             loss_pair = (w_k * residual).sum(dim=-1) / w_sum.squeeze(-1)  # (B, K)
-            loss_total = loss_total + loss_pair.mean()
+            # Only include parts with meaningful weight in the mean.
+            active = (w_sum.squeeze(-1) > 1e-4).float()
+            active_count = active.sum(dim=-1).clamp(min=1.0)
+            loss_total = loss_total + ((loss_pair * active).sum(dim=-1) / active_count).mean()
             count += 1
 
-            quats_list.append(self._rot_to_quat(R))                   # (B, K, 4)
+            quats_list.append(self._rot_to_quat(R_used))              # (B, K, 4)
 
         if count > 0:
             loss_total = loss_total / count
 
+        # Entropy regularization: penalize low entropy (collapse) instead of
+        # adding negative entropy directly, so total loss stays non-negative.
         mean_assign = assign.mean(dim=(0, 1, 2))                      # (K,)
         entropy = -(mean_assign * mean_assign.clamp(min=1e-8).log()).sum()
-        loss_total = loss_total - self.entropy_weight * entropy
+        max_entropy = torch.log(torch.tensor(float(K), device=device))
+        collapse_penalty = (max_entropy - entropy).clamp(min=0.0)
+        loss_total = loss_total + self.entropy_weight * collapse_penalty
 
         if quats_list:
             quats = torch.stack(quats_list, dim=1)                    # (B, F-1, K, 4)
