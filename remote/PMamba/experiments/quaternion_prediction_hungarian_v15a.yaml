@@ -1,0 +1,71 @@
+# Exp 15a: Hungarian correspondence, same recipe as v6p
+# Family: Sc_Co_pr01_N3_pts48-256_e140   (shared with v6p)
+# Only change: assignment_mode=hungarian on the loader -> reads the
+# *_hu_r2.npz cache instead of *_bi_r2.npz. Everything else identical.
+#
+# Baselines:
+#   v6q (no aux, mutual data path unused):         75.93%
+#   v6p (pr aux + mutual correspondence):          76.14%
+#   v15a (pr aux + HUNGARIAN correspondence):      ?
+#
+# If v15a >> v6p -> richer correspondence supervision pays off.
+# If v15a ~ v6p  -> prediction aux is correspondence-density insensitive.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_prediction_hungarian_v15a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.1
+  qcc_variant: prediction
