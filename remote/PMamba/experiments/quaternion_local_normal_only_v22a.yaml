@@ -1,0 +1,64 @@
+# Exp 22a: local-surface-normal quaternion field ONLY.
+# Family: LocalNormal_Co_pts48-256_e140.
+#
+# Per point per frame: k=10 nearest-neighbor PCA → smallest eigenvector
+# = local surface normal. Sign flipped toward frame centroid.
+# Quaternion from (0,1,0) to normal. Classifier sees ONLY (B, F, P, 4).
+# No XYZ, no correspondence, no residuals.
+#
+# Chain of tests ruling out derived-signal-only classification:
+#   v19a residual:     4.56%  (random)
+#   v20a shortest-rot: 4.56%  (random)
+#   v21a tops (radial):4.56%  (random)
+#   v22a local-normal: ?
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_local_normal_only_v22a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 10
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.reqnn_motion.LocalNormalOnlyMotion
+model_args:
+  num_classes: 25
+  pts_size: 96
+  hidden: 256
+  dropout: 0.1
+  knn_k: 10

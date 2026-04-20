@@ -1,0 +1,58 @@
+# Exp 23a: local-normal quaternion field + XYZ coords.
+# Family: LocalNormalXYZ_Co_pts48-256_e140.
+#
+# Same normal computation as v22a (k=10 PCA), but classifier now sees
+# 7 channels per point per frame: [x, y, z, qw, qx, qy, qz]. Tests
+# whether the normal quaternion field becomes useful when combined
+# with raw position.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_local_normal_xyz_v23a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 10
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.reqnn_motion.LocalNormalXYZMotion
+model_args:
+  num_classes: 25
+  pts_size: 96
+  hidden: 256
+  dropout: 0.1
+  knn_k: 10

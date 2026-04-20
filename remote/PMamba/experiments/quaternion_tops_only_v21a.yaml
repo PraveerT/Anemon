@@ -1,0 +1,60 @@
+# Exp 21a: space-filling-tops quaternion field ONLY.
+# Family: Tops_Co_pts48-256_e140.
+#
+# Classifier input: (B, F, P, 4) per-point per-frame quaternion field.
+# Each quat = rotation taking canonical "north" (0,1,0) to the unit
+# direction from frame-centroid to the point. Evolution of this field
+# across the 32 frames is the full signal -- no XYZ, no pairing, no
+# residuals.
+#
+# If this field carries gesture-discriminative info, we see >>4%.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_tops_only_v21a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 10
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.reqnn_motion.TopsOnlyMotion
+model_args:
+  num_classes: 25
+  pts_size: 96
+  hidden: 256
+  dropout: 0.1
