@@ -1,0 +1,67 @@
+# Exp 19a: residual-only classifier.
+# Family: ResidualOnly_Co_pts48-256_e140 (new family, entirely new architecture).
+#
+# The classifier sees NOTHING except per-point rigid-fit residuals per
+# frame-pair. No EdgeConv, no quaternion mixer, no rigidity modulation,
+# no XYZ features reach the classifier. XYZ is consumed only to compute
+# the residuals (best-fit single-rotation per frame-pair, detached SVD)
+# and then discarded.
+#
+# Hypothesis: if the residual IS the gesture-discriminative signal,
+# this should be >> 4% (random over 25 classes).
+# Target: solid signal means >30%. Strong hypothesis confirmation is
+# hitting 50%+. Decisive rejection would be staying near random.
+#
+# Baselines for reference:
+#   full architecture (v6q):   75.93%
+#   random chance (1/25):       4.00%
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_residual_only_v19a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.reqnn_motion.ResidualOnlyMotion
+model_args:
+  num_classes: 25
+  pts_size: 96
+  hidden: 256
+  dropout: 0.1
