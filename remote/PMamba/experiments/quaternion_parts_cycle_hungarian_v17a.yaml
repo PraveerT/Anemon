@@ -1,0 +1,74 @@
+# Exp 17a: K=6 parts cycle QCC (Option C) with Hungarian correspondence.
+# Family: Sc_Co_parts-cycle_pts48-256_e140 (new family, depth 0).
+#
+# Option C: network MLP heads predict forward and backward quaternions per
+# part (not derived from data -> free parameters). Cycle loss measures
+# q_bwd ∘ q_fwd drift from identity. Reconstruction loss keeps rotations
+# grounded in actual point motion. Entropy regularization prevents
+# assignment collapse. Predicted forward rotations are mean-pooled over
+# time and multiplicatively modulate encoded before classifier.
+#
+# Baselines:
+#   v6q  (no aux):                 75.93%
+#   v6p  (mutual + pr aux):        76.14%
+#   v15a (hu + pr aux):            74.07%
+#   v16a (hu + parts_rigidity):    73.03%   Option A+B, Procrustes-derived
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_parts_cycle_hungarian_v17a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step:
+  - 100
+  - 120
+  - 130
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims:
+  - 64
+  - 256
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.1
+  qcc_variant: parts_cycle
