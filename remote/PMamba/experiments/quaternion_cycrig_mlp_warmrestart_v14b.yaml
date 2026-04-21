@@ -1,0 +1,58 @@
+# Exp 14b: Deep cycle projection (2-layer MLP, zero-init output)
+#
+# Compact name: P[P[Sc_Co_none_pts48-256_e140]E125_Co_none_pts48-256_e140]E140_Nc_ccqM_pts256_e140
+# Family: Sc_Co_none_pts48-256_e140
+#
+# Builds on v14a which tied v8a at 80.08 (first arch change to not regress).
+# v14a's cycle_proj was single Conv1d(1, 256). Hypothesis: too few params to
+# learn useful cycle modulation. This uses:
+#   cycle_proj_deep = Conv1d(1, 128) + GELU + Conv1d(128, 256) + Tanh
+#   Final layer zero-init -> starts identical to v8a
+#
+# If v14b > 80.08 = cycle signal contributes when given enough capacity.
+# If v14b ~80 = capacity wasn't the issue, cycle signal just weak.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_cycrig_mlp_warmrestart_v14b/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 1
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+weights: ./work_dir/quaternion_noaux_warmrestart_v8a/epoch140_model.pt
+strict_load: false
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step: [100, 120, 130]
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 256
+  num_classes: 25
+  hidden_dims: [64, 256]
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.0
+  qcc_variant: cycle_rigidity_mlp

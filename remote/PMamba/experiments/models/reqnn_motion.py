@@ -1187,6 +1187,201 @@ class _GroundedDisplacementBidirLoss(nn.Module):
         return loss / max(count, 1)
 
 
+class _BearingRotationQCCLoss(nn.Module):
+    """True per-point bearing-rotation QCC.
+
+    Predicts per-point quaternion that rotates bearing(t) to bearing(t+1) from
+    encoded features. This is the literal quaternion cross-correlation: a
+    quaternion-valued prediction supervised against the geometric quaternion
+    rotating the point's bearing vector between frames.
+
+    Token: ``qr``.
+    """
+
+    def __init__(self, feat_dim):
+        super().__init__()
+        self.predictor = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim),
+            nn.GELU(),
+            nn.Linear(feat_dim, 4),
+        )
+
+    @staticmethod
+    def _bearing(xyz):
+        # xyz: (B, F, P, 3). Center per-frame then normalize to unit vectors.
+        bbox_min = xyz.min(dim=2).values
+        bbox_max = xyz.max(dim=2).values
+        centroids = (bbox_min + bbox_max) / 2
+        d = xyz - centroids.unsqueeze(2)
+        return d / d.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+
+    @staticmethod
+    def _rotation_quat(a, b):
+        # Quaternion rotating unit vector a -> unit vector b.
+        # q = [1 + a.b, a x b], normalized. Falls back to 180-deg handling.
+        dot = (a * b).sum(dim=-1, keepdim=True)
+        cross = torch.cross(a, b, dim=-1)
+        w = 1.0 + dot
+        q = torch.cat([w, cross], dim=-1)
+        # 180-deg case: a ~= -b, use any perpendicular axis.
+        near_opposite = (w.squeeze(-1) < 1e-6)
+        if near_opposite.any():
+            # Pick axis perpendicular to a.
+            ex = torch.zeros_like(a); ex[..., 0] = 1.0
+            ey = torch.zeros_like(a); ey[..., 1] = 1.0
+            use_ey = (a[..., 0].abs() > 0.9).unsqueeze(-1)
+            axis = torch.where(use_ey, ey, ex)
+            perp = axis - (axis * a).sum(dim=-1, keepdim=True) * a
+            perp = perp / perp.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+            q_flip = torch.cat([torch.zeros_like(dot), perp], dim=-1)
+            q = torch.where(near_opposite.unsqueeze(-1), q_flip, q)
+        return q / q.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+
+    def forward(self, encoded, points_xyz, num_frames, pts_per_frame):
+        # encoded: (B, D, F*P); points_xyz: (B, F, P, 3)
+        B, D, _ = encoded.shape
+        feat = encoded.view(B, D, num_frames, pts_per_frame)
+        bearings = self._bearing(points_xyz)  # (B, F, P, 3)
+
+        loss = torch.tensor(0.0, device=encoded.device)
+        count = 0
+        for t in range(num_frames - 1):
+            feat_t = feat[:, :, t].permute(0, 2, 1)  # (B, P, D)
+            a = bearings[:, t]        # (B, P, 3)
+            b = bearings[:, t + 1]    # (B, P, 3)
+            q_gt = self._rotation_quat(a, b).detach()  # (B, P, 4)
+
+            q_pred = self.predictor(feat_t)  # (B, P, 4)
+            q_pred = q_pred / q_pred.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+
+            # Geodesic loss: 1 - (q_pred . q_gt)^2 handles q ~ -q equivalence.
+            dot = (q_pred * q_gt).sum(dim=-1)
+            loss = loss + (1.0 - dot.pow(2)).mean()
+            count += 1
+        return loss / max(count, 1)
+
+
+
+class _PartsFeatureProcrustes(nn.Module):
+    """K-part Procrustes rotation + rigidity residual, used as features only.
+
+    Returns (aux_loss, features):
+      aux_loss: scalar entropy-collapse penalty (tiny) -- keeps parts distinct.
+      features: (B, F-1, K, 5) with [qw, qx, qy, qz, rigidity_residual] per part.
+    """
+
+    def __init__(self, feat_dim, num_parts=6, entropy_weight=0.01):
+        super().__init__()
+        self.num_parts = num_parts
+        self.entropy_weight = entropy_weight
+        self.assign_head = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim // 2),
+            nn.GELU(),
+            nn.Linear(feat_dim // 2, num_parts),
+        )
+
+    @staticmethod
+    def _rot_to_quat(R):
+        m00, m01, m02 = R[..., 0, 0], R[..., 0, 1], R[..., 0, 2]
+        m10, m11, m12 = R[..., 1, 0], R[..., 1, 1], R[..., 1, 2]
+        m20, m21, m22 = R[..., 2, 0], R[..., 2, 1], R[..., 2, 2]
+        tr = m00 + m11 + m22
+        eps = 1e-8
+        s1 = torch.sqrt(torch.clamp(1 + tr, min=eps)) * 2
+        q1 = torch.stack([0.25 * s1, (m21 - m12) / s1, (m02 - m20) / s1, (m10 - m01) / s1], dim=-1)
+        s2 = torch.sqrt(torch.clamp(1 + m00 - m11 - m22, min=eps)) * 2
+        q2 = torch.stack([(m21 - m12) / s2, 0.25 * s2, (m01 + m10) / s2, (m02 + m20) / s2], dim=-1)
+        s3 = torch.sqrt(torch.clamp(1 + m11 - m00 - m22, min=eps)) * 2
+        q3 = torch.stack([(m02 - m20) / s3, (m01 + m10) / s3, 0.25 * s3, (m12 + m21) / s3], dim=-1)
+        s4 = torch.sqrt(torch.clamp(1 + m22 - m00 - m11, min=eps)) * 2
+        q4 = torch.stack([(m10 - m01) / s4, (m02 + m20) / s4, (m12 + m21) / s4, 0.25 * s4], dim=-1)
+        cond1 = tr > 0
+        cond2 = (m00 >= m11) & (m00 >= m22)
+        cond3 = m11 >= m22
+        q_nt = torch.where(cond2.unsqueeze(-1), q2,
+                           torch.where(cond3.unsqueeze(-1), q3, q4))
+        q = torch.where(cond1.unsqueeze(-1), q1, q_nt)
+        return q / q.norm(dim=-1, keepdim=True).clamp(min=eps)
+
+    def forward(self, encoded, points_xyz_flat, num_frames, pts_per_frame, corr_matched):
+        B, D, _ = encoded.shape
+        F_, P = num_frames, pts_per_frame
+        K = self.num_parts
+        device = encoded.device
+
+        feat = encoded.transpose(1, 2).contiguous()
+        logits = self.assign_head(feat)                  # (B, F*P, K)
+        assign = torch.softmax(logits, dim=-1).view(B, F_, P, K)
+
+        xyz = points_xyz_flat.view(B, F_, P, 3)
+
+        feats_list = []
+        I3 = torch.eye(3, device=device).view(1, 1, 3, 3)
+
+        for t in range(F_ - 1):
+            src = xyz[:, t]
+            tgt = xyz[:, t + 1]
+            mask = corr_matched[:, t].float() if corr_matched is not None \
+                else torch.ones(B, P, device=device)
+            sa = assign[:, t]
+            ta = assign[:, t + 1]
+
+            w_k = (sa * ta).permute(0, 2, 1) * mask.unsqueeze(1)       # (B, K, P)
+            w_sum = w_k.sum(dim=-1, keepdim=True).clamp(min=1e-6)      # (B, K, 1)
+
+            src_b = src.unsqueeze(1).expand(B, K, P, 3)
+            tgt_b = tgt.unsqueeze(1).expand(B, K, P, 3)
+            src_mean = (w_k.unsqueeze(-1) * src_b).sum(dim=-2) / w_sum
+            tgt_mean = (w_k.unsqueeze(-1) * tgt_b).sum(dim=-2) / w_sum
+            src_c = src_b - src_mean.unsqueeze(-2)
+            tgt_c = tgt_b - tgt_mean.unsqueeze(-2)
+
+            H = torch.einsum("bkp,bkpi,bkpj->bkij", w_k, src_c, tgt_c)
+            H = H + 1e-6 * I3
+
+            try:
+                U, S, Vh = torch.linalg.svd(H)
+            except Exception:
+                R_used = I3.expand(B, K, 3, 3).contiguous()
+                quats = self._rot_to_quat(R_used)
+                residuals = torch.zeros(B, K, device=device)
+                feats_list.append(torch.cat([quats, residuals.unsqueeze(-1)], dim=-1))
+                continue
+
+            V = Vh.transpose(-1, -2)
+            det = torch.det(torch.matmul(V, U.transpose(-1, -2)))
+            D_diag = torch.ones(B, K, 3, device=device)
+            D_diag[..., -1] = det
+            D_mat = torch.diag_embed(D_diag)
+            R = torch.matmul(V, torch.matmul(D_mat, U.transpose(-1, -2)))
+
+            # Detach R: feature-only path, no SVD gradient needed.
+            R_used = R.detach()
+            bad = ~torch.isfinite(R_used).all(dim=-1).all(dim=-1)
+            if bad.any():
+                R_used = torch.where(bad.unsqueeze(-1).unsqueeze(-1), I3.expand_as(R_used), R_used)
+
+            pred = torch.einsum("bkij,bkpj->bkpi", R_used, src_c)
+            residual_per_point = ((pred - tgt_c) ** 2).sum(dim=-1)
+            residual_per_part = (w_k * residual_per_point).sum(dim=-1) / w_sum.squeeze(-1)
+
+            quats = self._rot_to_quat(R_used)
+            feats_list.append(torch.cat([quats, residual_per_part.unsqueeze(-1)], dim=-1))  # (B, K, 5)
+
+        if feats_list:
+            features = torch.stack(feats_list, dim=1)                    # (B, F-1, K, 5)
+        else:
+            features = torch.zeros(B, 0, K, 5, device=device)
+
+        # Entropy collapse penalty (tiny)
+        mean_assign = assign.mean(dim=(0, 1, 2))
+        entropy = -(mean_assign * mean_assign.clamp(min=1e-8).log()).sum()
+        max_entropy = torch.log(torch.tensor(float(K), device=device))
+        collapse = (max_entropy - entropy).clamp(min=0.0)
+        aux_loss = self.entropy_weight * collapse
+
+        return aux_loss, features
+
 class _TemporalPredictionLoss(nn.Module):
     """Predict next-frame features from current-frame features.
 
@@ -1336,6 +1531,59 @@ class _DisplacementAgreementLoss(nn.Module):
         return loss / max(count, 1)
 
 
+def _compute_cycle_consistency_rigidity(points_4d, num_frames):
+    """Cycle-consistency score per point from bearing-quaternion triplets.
+
+    For each interior frame t in [1, F-2], for each point i, compute
+    q_prev = rotation(bearing[t-1, i] -> bearing[t, i]) and q_next = rotation
+    (bearing[t, i] -> bearing[t+1, i]).  Score = (q_prev . q_next)^2 in [0, 1].
+    Score is high when motion is smooth (same rotation continued), low when
+    motion oscillates or reverses.  Boundary frames copy nearest interior
+    score.
+
+    Args:
+        points_4d: (B, F, P, 4)
+        num_frames: int
+    Returns:
+        (B, 1, F*P) in [0, 1]
+    """
+    B, F, P, _ = points_4d.shape
+    device = points_4d.device
+    xyz = points_4d[..., :3]
+
+    bbox_min = xyz.min(dim=2).values
+    bbox_max = xyz.max(dim=2).values
+    centroids = (bbox_min + bbox_max) / 2
+    d = xyz - centroids.unsqueeze(2)
+    bearings = d / d.norm(dim=-1, keepdim=True).clamp(min=1e-12)  # (B, F, P, 3)
+
+    def rotation_quat(a, b):
+        # Unit-vector rotation: q = [1 + a.b, a x b], normalized.
+        dot = (a * b).sum(dim=-1, keepdim=True)
+        cross = torch.cross(a, b, dim=-1)
+        q = torch.cat([1.0 + dot, cross], dim=-1)
+        return q / q.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+
+    # Need F >= 3 for triplets. If F < 3 fall back to constant 1.
+    if F < 3:
+        return torch.ones(B, 1, F * P, device=device), 1.0
+
+    scores = torch.zeros(B, F, P, device=device)
+    for t in range(1, F - 1):
+        a = bearings[:, t - 1]
+        m = bearings[:, t]
+        b = bearings[:, t + 1]
+        q_prev = rotation_quat(a, m)
+        q_next = rotation_quat(m, b)
+        dot = (q_prev * q_next).sum(dim=-1)  # (B, P)
+        scores[:, t] = dot.pow(2)
+    # Boundary frames: copy nearest interior
+    scores[:, 0] = scores[:, 1]
+    scores[:, F - 1] = scores[:, F - 2]
+
+    return scores.reshape(B, 1, -1), 1.0
+
+
 def _compute_bearing_qcc_multiscale(points_4d, num_frames, scales=(5, 15, 40),
                                      corr_matched=None):
     """Bearing QCC at multiple spatial scales.
@@ -1438,7 +1686,14 @@ class BearingQCCFeatureMotion(
         self.latest_aux_metrics = {}
 
         is_multiscale = 'multiscale' in self.qcc_variants
-        rig_channels = len(rigidity_scales) if is_multiscale else 1
+        is_cycle_rig = 'cycle_rigidity' in self.qcc_variants
+        is_cycle_side = 'cycle_rigidity_side' in self.qcc_variants
+        if is_multiscale:
+            rig_channels = len(rigidity_scales)
+        elif is_cycle_rig:
+            rig_channels = 2
+        else:
+            rig_channels = 1
         self.rigidity_proj = nn.Sequential(
             nn.Conv1d(rig_channels, hidden2, kernel_size=1, bias=True),
             nn.Tanh(),
@@ -1446,12 +1701,45 @@ class BearingQCCFeatureMotion(
         nn.init.zeros_(self.rigidity_proj[0].weight)
         nn.init.zeros_(self.rigidity_proj[0].bias)
 
+        # Side-path cycle projection (separate from rigidity_proj so v8a
+        # weights stay pristine). Only active when qcc_variant='cycle_rigidity_side'.
+        self.cycle_proj = nn.Sequential(
+            nn.Conv1d(1, hidden2, kernel_size=1, bias=True),
+            nn.Tanh(),
+        )
+        nn.init.zeros_(self.cycle_proj[0].weight)
+        nn.init.zeros_(self.cycle_proj[0].bias)
+
+        # Deeper cycle projection for cycle_rigidity_mlp variant.
+        # 1 -> hidden2//2 -> hidden2, with zero-init final layer so start
+        # output is exactly zero (matches v14a starting behavior).
+        _cyc_mid = max(hidden2 // 2, 16)
+        self.cycle_proj_deep = nn.Sequential(
+            nn.Conv1d(1, _cyc_mid, kernel_size=1, bias=True),
+            nn.GELU(),
+            nn.Conv1d(_cyc_mid, hidden2, kernel_size=1, bias=True),
+            nn.Tanh(),
+        )
+        # Kaiming init for hidden layer (default); zero init for output layer
+        nn.init.zeros_(self.cycle_proj_deep[2].weight)
+        nn.init.zeros_(self.cycle_proj_deep[2].bias)
+
         self.corr_contrastive = _CorrespondenceContrastiveLoss()
         self.infonce_loss = _InfoNCETemporalLoss(temperature=0.1)
         self.prediction_loss = _TemporalPredictionLoss(feat_dim=hidden2)
+        # Parts-feature (v18a, no aux loss path)
+        num_parts_f = 6
+        self.parts_feature_module = _PartsFeatureProcrustes(feat_dim=hidden2, num_parts=num_parts_f)
+        self.parts_feature_proj = nn.Sequential(
+            nn.Linear(num_parts_f * 5, hidden2),
+            nn.GELU(),
+            nn.Linear(hidden2, hidden2),
+        )
+
         self.grounded_disp_loss = _GroundedDisplacementLoss(feat_dim=hidden2)
         self.grounded_disp_dir_loss = _GroundedDisplacementDirectionLoss(feat_dim=hidden2)
         self.grounded_disp_bidir_loss = _GroundedDisplacementBidirLoss(feat_dim=hidden2)
+        self.bearing_rot_qcc_loss = _BearingRotationQCCLoss(feat_dim=hidden2)
         self.local_cycle = _LocalCycleConsistencyLoss()
         self.displacement_loss = _DisplacementAgreementLoss(knn_k=bearing_knn_k)
         # Grounded cycle consistency (used by qcc_variant='grounded_cycle')
@@ -1653,6 +1941,19 @@ class BearingQCCFeatureMotion(
             rigidity, corr_valid_ratio = _compute_bearing_qcc_multiscale(
                 sampled, num_frames, scales=self.rigidity_scales,
                 corr_matched=corr_matched)
+        elif self.qcc_variant == 'cycle_rigidity':
+            geom_rig, corr_valid_ratio = _compute_bearing_qcc_aligned(
+                sampled, num_frames, knn_k=self.bearing_knn_k,
+                corr_matched=corr_matched)
+            cyc_rig, _ = _compute_cycle_consistency_rigidity(sampled, num_frames)
+            rigidity = torch.cat([geom_rig, cyc_rig], dim=1)
+        elif self.qcc_variant in ('cycle_rigidity_side', 'cycle_rigidity_mlp'):
+            rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
+                sampled, num_frames, knn_k=self.bearing_knn_k,
+                corr_matched=corr_matched)
+            side_cyc, _ = _compute_cycle_consistency_rigidity(sampled, num_frames)
+            # stash for use after rigidity_proj
+            self._side_cyc = side_cyc
         else:
             rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
                 sampled, num_frames, knn_k=self.bearing_knn_k,
@@ -1664,7 +1965,27 @@ class BearingQCCFeatureMotion(
         # Modulate with rigidity
         if not self.disable_rigidity:
             modulation = self.rigidity_proj(rigidity)
+            if self.qcc_variant == 'cycle_rigidity_side' and hasattr(self, '_side_cyc'):
+                modulation = modulation + self.cycle_proj(self._side_cyc)
+                self._side_cyc = None
+            elif self.qcc_variant == 'cycle_rigidity_mlp' and hasattr(self, '_side_cyc'):
+                modulation = modulation + self.cycle_proj_deep(self._side_cyc)
+                self._side_cyc = None
             encoded = encoded * (1.0 + modulation)
+
+        # Parts-feature modulation (always on train + eval). No aux loss beyond
+        # a tiny entropy collapse penalty returned by the module.
+        self._parts_feature_aux_loss = None
+        if 'parts_feature' in self.qcc_variants and corr_matched is not None:
+            xyz_flat_pf = sampled[..., :3].reshape(batch_size, num_frames * pts_per_frame, 3)
+            pf_loss, pf_features = self.parts_feature_module(
+                encoded, xyz_flat_pf, num_frames, pts_per_frame, corr_matched,
+            )
+            self._parts_feature_aux_loss = pf_loss
+            if pf_features.shape[1] > 0:
+                pf_pooled = pf_features.mean(dim=1).reshape(batch_size, -1)  # (B, K*5)
+                pf_mod = self.parts_feature_proj(pf_pooled)                   # (B, hidden2)
+                encoded = encoded * (1.0 + pf_mod.unsqueeze(-1))
 
         # Auxiliary losses
         self.latest_aux_loss = None
@@ -1705,7 +2026,7 @@ class BearingQCCFeatureMotion(
                     qcc_any_active = True
                     metrics.update(qcc_metrics)
                     metrics[f'qcc_{variant}_raw'] = qcc_loss.detach()
-                elif variant in ('grounded_disp', 'grounded_disp_dir', 'grounded_disp_bidir'):
+                elif variant in ('grounded_disp', 'grounded_disp_dir', 'grounded_disp_bidir', 'bearing_rot'):
                     if variant == 'grounded_disp':
                         qcc_loss = self.grounded_disp_loss(
                             encoded, sampled[..., :3], num_frames, pts_per_frame)
@@ -1715,6 +2036,11 @@ class BearingQCCFeatureMotion(
                     elif variant == 'grounded_disp_bidir':
                         qcc_loss = self.grounded_disp_bidir_loss(
                             encoded, sampled[..., :3], num_frames, pts_per_frame)
+                    elif variant == 'bearing_rot':
+                        # Reshape sampled xyz for _BearingRotationQCCLoss: need (B, F, P, 3)
+                        xyz_raw = sampled[..., :3].view(sampled.shape[0], num_frames, pts_per_frame, 3)
+                        qcc_loss = self.bearing_rot_qcc_loss(
+                            encoded, xyz_raw, num_frames, pts_per_frame)
                     total_aux = total_aux + weight * qcc_loss
                     qcc_total = qcc_total + weight * qcc_loss.detach()
                     qcc_any_active = True
@@ -1733,6 +2059,8 @@ class BearingQCCFeatureMotion(
                         qcc_loss = self.displacement_loss(
                             encoded, sampled, num_frames, pts_per_frame,
                             corr_matched=corr_matched)
+                    elif variant == 'parts_feature':
+                        qcc_loss = self._parts_feature_aux_loss if self._parts_feature_aux_loss is not None else torch.tensor(0.0, device=encoded.device)
                     elif variant == 'contrastive':
                         qcc_loss = self.corr_contrastive(
                             encoded, num_frames, pts_per_frame, corr_matched)
@@ -1760,3 +2088,801 @@ class BearingQCCFeatureMotion(
 
 # Keep the legacy module alias so older imports still resolve.
 REQNNMotion = SimpleLinearMotion
+
+class ResidualOnlyMotion(nn.Module):
+    """Pure residual-only classifier using sorted top-K + stat features."""
+
+    def __init__(
+        self,
+        num_classes=25,
+        pts_size=96,
+        hidden=256,
+        dropout=0.1,
+        top_k=32,
+        **kwargs,
+    ):
+        super().__init__()
+        self.pts_size = pts_size
+        self.top_k = top_k
+        self.num_stats = 7                       # mean, std, p50, p75, p90, p95, max
+        self.per_pair_dim = top_k + self.num_stats
+
+        c1, c2 = 128, hidden
+        self.pair_mlp = nn.Sequential(
+            nn.Linear(self.per_pair_dim, c1),
+            nn.GELU(),
+            nn.Linear(c1, c2),
+            nn.GELU(),
+        )
+        self.temporal = nn.Sequential(
+            nn.Conv1d(c2, c2, 3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(c2, c2, 3, padding=1),
+            nn.GELU(),
+            nn.AdaptiveAvgPool1d(1),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(c2, num_classes)
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    @staticmethod
+    def _procrustes_residuals(src, tgt, mask):
+        B, P, _ = src.shape
+        device = src.device
+        w = mask.clamp(min=0.0)
+        w_sum = w.sum(dim=-1, keepdim=True).clamp(min=1e-6)
+        src_mean = (src * w.unsqueeze(-1)).sum(dim=1, keepdim=True) / w_sum.unsqueeze(-1)
+        tgt_mean = (tgt * w.unsqueeze(-1)).sum(dim=1, keepdim=True) / w_sum.unsqueeze(-1)
+        src_c = src - src_mean
+        tgt_c = tgt - tgt_mean
+        H = torch.einsum("bp,bpi,bpj->bij", w, src_c, tgt_c)
+        H = H + 1e-6 * torch.eye(3, device=device).unsqueeze(0)
+        try:
+            U, S, Vh = torch.linalg.svd(H)
+        except Exception:
+            R = torch.eye(3, device=device).unsqueeze(0).expand(B, 3, 3)
+            pred = torch.einsum("bij,bpj->bpi", R, src_c)
+            return ((pred - tgt_c) ** 2).sum(dim=-1) * mask
+        V = Vh.transpose(-1, -2)
+        det = torch.det(torch.matmul(V, U.transpose(-1, -2)))
+        D_diag = torch.ones(B, 3, device=device)
+        D_diag[..., -1] = det
+        D_mat = torch.diag_embed(D_diag)
+        R = torch.matmul(V, torch.matmul(D_mat, U.transpose(-1, -2)))
+        R = R.detach()
+        bad = ~torch.isfinite(R).all(dim=-1).all(dim=-1)
+        if bad.any():
+            R = torch.where(
+                bad.unsqueeze(-1).unsqueeze(-1),
+                torch.eye(3, device=device).unsqueeze(0).expand_as(R),
+                R,
+            )
+        pred = torch.einsum("bij,bpj->bpi", R, src_c)
+        res = ((pred - tgt_c) ** 2).sum(dim=-1)
+        return res * mask
+
+    def forward(self, sample):
+        pts = sample["points"]
+        if pts.dim() == 3:
+            B, N, C = pts.shape
+            F_ = N // self.pts_size
+            pts = pts.view(B, F_, self.pts_size, C)
+        B, F_, P, C = pts.shape
+        device = pts.device
+
+        xyz = pts[..., :3].float()
+        tgt_idx_fp = sample["corr_full_target_idx"].view(B, F_, P).long()
+        w_fp = sample["corr_full_weight"].view(B, F_, P).float()
+
+        per_pair_feats = []
+        K = min(self.top_k, P)
+        for t in range(F_ - 1):
+            src = xyz[:, t]
+            tgt = xyz[:, t + 1]
+            idx = tgt_idx_fp[:, t]
+            valid = (idx >= 0) & (w_fp[:, t] > 0)
+            idx_within = torch.where(valid, idx % P, torch.zeros_like(idx))
+            tgt_paired = torch.gather(tgt, 1, idx_within.unsqueeze(-1).expand(-1, -1, 3))
+            res = self._procrustes_residuals(src, tgt_paired, valid.float())  # (B, P)
+
+            # sorted descending top-K (retains largest articulation signal)
+            top_vals, _ = torch.topk(res, K, dim=-1, largest=True)
+
+            # stats over all valid residuals (non-zero after masking)
+            valid_f = valid.float().clamp(min=1e-6)
+            w_sum = valid_f.sum(dim=-1, keepdim=True).clamp(min=1.0)
+            mean = (res * valid_f).sum(dim=-1, keepdim=True) / w_sum
+            var = ((res - mean) ** 2 * valid_f).sum(dim=-1, keepdim=True) / w_sum
+            std = var.sqrt()
+            # quantiles: sort ascending, take at k=int(qN) after removing invalid
+            sorted_res, _ = torch.sort(res, dim=-1)
+            p50 = sorted_res[:, P // 2 : P // 2 + 1]
+            p75 = sorted_res[:, int(0.75 * P) : int(0.75 * P) + 1]
+            p90 = sorted_res[:, int(0.90 * P) : int(0.90 * P) + 1]
+            p95 = sorted_res[:, int(0.95 * P) : int(0.95 * P) + 1]
+            mx = sorted_res[:, -1:]
+            stats = torch.cat([mean, std, p50, p75, p90, p95, mx], dim=-1)  # (B, 7)
+
+            pair_feat = torch.cat([top_vals, stats], dim=-1)  # (B, K+7)
+            per_pair_feats.append(pair_feat)
+
+        pair_stack = torch.stack(per_pair_feats, dim=1)                    # (B, F-1, K+7)
+
+        # Per-sample z-normalize the full feature tensor so scale is consistent
+        flat = pair_stack.reshape(B, -1)
+        mean_n = flat.mean(dim=-1, keepdim=True)
+        std_n = flat.std(dim=-1, keepdim=True).clamp(min=1e-6)
+        pair_stack = (pair_stack - mean_n.unsqueeze(-1)) / std_n.unsqueeze(-1)
+
+        # Per-pair MLP
+        pp = self.pair_mlp(pair_stack)                                      # (B, F-1, c2)
+        pp = pp.transpose(1, 2)                                             # (B, c2, F-1)
+        fvec = self.temporal(pp).squeeze(-1)                                # (B, c2)
+        fvec = self.dropout(fvec)
+        return self.classifier(fvec)
+
+
+class ShortestRotOnlyMotion(nn.Module):
+    """Classify gestures using ONLY per-point shortest-rotation quaternions."""
+
+    def __init__(
+        self,
+        num_classes=25,
+        pts_size=96,
+        hidden=256,
+        dropout=0.1,
+        **kwargs,
+    ):
+        super().__init__()
+        self.pts_size = pts_size
+        c1, c2, c3 = 64, 128, hidden
+        # Per frame-pair: input is (B, 4, P) — 4 quaternion channels, P points.
+        self.point_conv = nn.Sequential(
+            nn.Conv1d(4, c1, 1),
+            nn.GELU(),
+            nn.Conv1d(c1, c2, 1),
+            nn.GELU(),
+            nn.Conv1d(c2, c3, 1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.temporal_conv = nn.Sequential(
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(c3, num_classes)
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    @staticmethod
+    def _shortest_rot_quats(src, tgt, mask):
+        """src, tgt: (B, P, 3) centered; mask: (B, P) float.
+        Returns: (B, P, 4) quat (w, x, y, z). Invalid -> identity (1,0,0,0)."""
+        B, P, _ = src.shape
+        device = src.device
+        dot = (src * tgt).sum(dim=-1)
+        sn = src.norm(dim=-1).clamp(min=1e-6)
+        tn = tgt.norm(dim=-1).clamp(min=1e-6)
+        cos_a = (dot / (sn * tn)).clamp(min=-1.0 + 1e-6, max=1.0 - 1e-6)
+        angle = torch.acos(cos_a)                                    # (B, P)
+        cross = torch.cross(src, tgt, dim=-1)
+        cross_norm = cross.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        axis = cross / cross_norm
+        half = angle * 0.5
+        w = torch.cos(half).unsqueeze(-1)
+        xyz = torch.sin(half).unsqueeze(-1) * axis
+        quat = torch.cat([w, xyz], dim=-1)
+        identity = torch.zeros_like(quat)
+        identity[..., 0] = 1.0
+        mb = mask.bool().unsqueeze(-1)
+        return torch.where(mb, quat, identity)
+
+    def forward(self, sample):
+        pts = sample["points"]
+        if pts.dim() == 3:
+            B, N, C = pts.shape
+            F_ = N // self.pts_size
+            pts = pts.view(B, F_, self.pts_size, C)
+        B, F_, P, C = pts.shape
+        device = pts.device
+
+        xyz = pts[..., :3].float()
+        tgt_idx_fp = sample["corr_full_target_idx"].view(B, F_, P).long()
+        w_fp = sample["corr_full_weight"].view(B, F_, P).float()
+
+        quat_list = []
+        for t in range(F_ - 1):
+            src = xyz[:, t]
+            tgt = xyz[:, t + 1]
+            idx = tgt_idx_fp[:, t]
+            valid = (idx >= 0) & (w_fp[:, t] > 0)
+            idx_within = torch.where(valid, idx % P, torch.zeros_like(idx))
+            tgt_paired = torch.gather(tgt, 1, idx_within.unsqueeze(-1).expand(-1, -1, 3))
+
+            # Center each frame at its weighted centroid (masked).
+            mask_f = valid.float()
+            w_sum = mask_f.sum(dim=-1, keepdim=True).clamp(min=1.0)
+            src_mean = (src * mask_f.unsqueeze(-1)).sum(dim=1, keepdim=True) / w_sum.unsqueeze(-1)
+            tgt_mean = (tgt_paired * mask_f.unsqueeze(-1)).sum(dim=1, keepdim=True) / w_sum.unsqueeze(-1)
+            src_c = src - src_mean
+            tgt_c = tgt_paired - tgt_mean
+
+            q = self._shortest_rot_quats(src_c, tgt_c, mask_f)      # (B, P, 4)
+            quat_list.append(q)
+
+        quats = torch.stack(quat_list, dim=1)                       # (B, F-1, P, 4)
+
+        # Per-frame-pair conv over points
+        qf = quats.permute(0, 1, 3, 2).reshape(B * (F_ - 1), 4, P)  # (B*(F-1), 4, P)
+        f = self.point_conv(qf).squeeze(-1)                         # (B*(F-1), c3)
+        f = f.view(B, F_ - 1, -1).transpose(1, 2)                    # (B, c3, F-1)
+        f = self.temporal_conv(f).squeeze(-1)                        # (B, c3)
+        f = self.dropout(f)
+        return self.classifier(f)
+
+
+class TopsOnlyMotion(nn.Module):
+    """Pure "tops field" classifier: per-point per-frame orientation quats."""
+
+    def __init__(
+        self,
+        num_classes=25,
+        pts_size=96,
+        hidden=256,
+        dropout=0.1,
+        **kwargs,
+    ):
+        super().__init__()
+        self.pts_size = pts_size
+        # Per frame: input is (B, 4, P). Convs along points.
+        c1, c2, c3 = 64, 128, hidden
+        self.point_conv = nn.Sequential(
+            nn.Conv1d(4, c1, 1),
+            nn.GELU(),
+            nn.Conv1d(c1, c2, 1),
+            nn.GELU(),
+            nn.Conv1d(c2, c3, 1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.temporal_conv = nn.Sequential(
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(c3, num_classes)
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    @staticmethod
+    def _quat_from_north(direction):
+        """direction: (B, P, 3) unit vector. Returns (B, P, 4) quat taking (0,1,0) to direction."""
+        B, P, _ = direction.shape
+        device = direction.device
+        north = torch.zeros_like(direction)
+        north[..., 1] = 1.0
+        dot = (north * direction).sum(dim=-1).clamp(min=-1.0 + 1e-6, max=1.0 - 1e-6)
+        angle = torch.acos(dot)                              # (B, P)
+        cross = torch.cross(north, direction, dim=-1)        # (B, P, 3)
+        cross_n = cross.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        axis = cross / cross_n
+        half = angle * 0.5
+        w = torch.cos(half).unsqueeze(-1)
+        xyz = torch.sin(half).unsqueeze(-1) * axis
+        return torch.cat([w, xyz], dim=-1)                    # (B, P, 4)
+
+    def forward(self, sample):
+        pts = sample["points"]
+        if pts.dim() == 3:
+            B, N, C = pts.shape
+            F_ = N // self.pts_size
+            pts = pts.view(B, F_, self.pts_size, C)
+        B, F_, P, C = pts.shape
+        device = pts.device
+
+        xyz = pts[..., :3].float()                            # (B, F, P, 3)
+
+        # Weighted centroid per frame (uniform weights since we have all points).
+        centroid = xyz.mean(dim=2, keepdim=True)              # (B, F, 1, 3)
+        rel = xyz - centroid                                  # (B, F, P, 3)
+        rel_norm = rel.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        direction = rel / rel_norm                            # (B, F, P, 3)
+
+        # Per-point per-frame quaternion taking north -> direction
+        q = self._quat_from_north(direction.view(B * F_, P, 3)).view(B, F_, P, 4)
+
+        # Per-frame conv over points
+        qf = q.permute(0, 1, 3, 2).reshape(B * F_, 4, P)      # (B*F, 4, P)
+        f = self.point_conv(qf).squeeze(-1)                    # (B*F, c3)
+        f = f.view(B, F_, -1).transpose(1, 2)                  # (B, c3, F)
+        f = self.temporal_conv(f).squeeze(-1)                  # (B, c3)
+        f = self.dropout(f)
+        return self.classifier(f)
+
+
+class LocalNormalOnlyMotion(nn.Module):
+    """Classify from local-normal quaternion field only. No XYZ input."""
+
+    def __init__(
+        self,
+        num_classes=25,
+        pts_size=96,
+        hidden=256,
+        dropout=0.1,
+        knn_k=10,
+        **kwargs,
+    ):
+        super().__init__()
+        self.pts_size = pts_size
+        self.knn_k = knn_k
+        c1, c2, c3 = 64, 128, hidden
+        self.point_conv = nn.Sequential(
+            nn.Conv1d(4, c1, 1),
+            nn.GELU(),
+            nn.Conv1d(c1, c2, 1),
+            nn.GELU(),
+            nn.Conv1d(c2, c3, 1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.temporal_conv = nn.Sequential(
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(c3, num_classes)
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    @staticmethod
+    def _compute_local_normals(xyz, k):
+        """xyz: (B, F, P, 3); returns (B, F, P, 3) unit normals, sign-flipped toward centroid."""
+        B, F_, P, _ = xyz.shape
+        pts = xyz.reshape(B * F_, P, 3)
+        dist = torch.cdist(pts, pts)                                 # (B*F, P, P)
+        _, idx = torch.topk(dist, k=min(k + 1, P), largest=False, dim=-1)
+        idx = idx[:, :, 1:]                                          # drop self
+        k_eff = idx.shape[-1]
+        idx_exp = idx.unsqueeze(-1).expand(-1, -1, -1, 3)
+        pts_exp = pts.unsqueeze(1).expand(-1, P, -1, -1)             # (B*F, P, P, 3)
+        neighbors = torch.gather(pts_exp, 2, idx_exp)                # (B*F, P, k, 3)
+        nmean = neighbors.mean(dim=2, keepdim=True)
+        nc = neighbors - nmean                                        # (B*F, P, k, 3)
+        try:
+            _, _, Vh = torch.linalg.svd(nc, full_matrices=False)     # Vh: (B*F, P, 3, 3)
+        except Exception:
+            return torch.zeros_like(pts).reshape(B, F_, P, 3)
+        normals = Vh[..., -1, :]                                      # (B*F, P, 3)
+        # Sign flip so normal . (centroid - p) > 0 (i.e. points TOWARD centroid).
+        centroid = pts.mean(dim=1, keepdim=True)
+        to_centroid = centroid - pts
+        sign = torch.sign((normals * to_centroid).sum(dim=-1, keepdim=True))
+        sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+        normals = normals * sign
+        # Normalize again just in case.
+        nn2 = normals.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        normals = normals / nn2
+        return normals.reshape(B, F_, P, 3)
+
+    @staticmethod
+    def _quat_from_north(direction):
+        B, P, _ = direction.shape
+        device = direction.device
+        north = torch.zeros_like(direction)
+        north[..., 1] = 1.0
+        dot = (north * direction).sum(dim=-1).clamp(min=-1.0 + 1e-6, max=1.0 - 1e-6)
+        angle = torch.acos(dot)
+        cross = torch.cross(north, direction, dim=-1)
+        cross_n = cross.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        axis = cross / cross_n
+        half = angle * 0.5
+        w = torch.cos(half).unsqueeze(-1)
+        xyz = torch.sin(half).unsqueeze(-1) * axis
+        return torch.cat([w, xyz], dim=-1)
+
+    def forward(self, sample):
+        pts = sample["points"]
+        if pts.dim() == 3:
+            B, N, C = pts.shape
+            F_ = N // self.pts_size
+            pts = pts.view(B, F_, self.pts_size, C)
+        B, F_, P, C = pts.shape
+
+        xyz = pts[..., :3].float()
+        normals = self._compute_local_normals(xyz, self.knn_k)       # (B, F, P, 3)
+
+        # Detach normals to avoid SVD gradient instability.
+        normals = normals.detach()
+
+        q = self._quat_from_north(normals.view(B * F_, P, 3)).view(B, F_, P, 4)
+
+        qf = q.permute(0, 1, 3, 2).reshape(B * F_, 4, P)
+        f = self.point_conv(qf).squeeze(-1)
+        f = f.view(B, F_, -1).transpose(1, 2)
+        f = self.temporal_conv(f).squeeze(-1)
+        f = self.dropout(f)
+        return self.classifier(f)
+
+
+class LocalNormalXYZMotion(nn.Module):
+    """XYZ coords + local-normal quaternion per point per frame (7 channels)."""
+
+    def __init__(
+        self,
+        num_classes=25,
+        pts_size=96,
+        hidden=256,
+        dropout=0.1,
+        knn_k=10,
+        **kwargs,
+    ):
+        super().__init__()
+        self.pts_size = pts_size
+        self.knn_k = knn_k
+        c1, c2, c3 = 64, 128, hidden
+        self.point_conv = nn.Sequential(
+            nn.Conv1d(7, c1, 1),
+            nn.GELU(),
+            nn.Conv1d(c1, c2, 1),
+            nn.GELU(),
+            nn.Conv1d(c2, c3, 1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.temporal_conv = nn.Sequential(
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(c3, c3, 3, padding=1),
+            nn.GELU(),
+            nn.AdaptiveMaxPool1d(1),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(c3, num_classes)
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    def forward(self, sample):
+        pts = sample["points"]
+        if pts.dim() == 3:
+            B, N, C = pts.shape
+            F_ = N // self.pts_size
+            pts = pts.view(B, F_, self.pts_size, C)
+        B, F_, P, C = pts.shape
+
+        xyz = pts[..., :3].float()
+
+        # Local-normal via PCA (same as v22a)
+        normals = LocalNormalOnlyMotion._compute_local_normals(xyz, self.knn_k).detach()
+        q = LocalNormalOnlyMotion._quat_from_north(
+            normals.view(B * F_, P, 3)
+        ).view(B, F_, P, 4)
+
+        # Concat xyz + quat -> 7 channels per point per frame
+        feat = torch.cat([xyz, q], dim=-1)                           # (B, F, P, 7)
+
+        # Per-frame conv over points
+        fp = feat.permute(0, 1, 3, 2).reshape(B * F_, 7, P)
+        f = self.point_conv(fp).squeeze(-1)
+        f = f.view(B, F_, -1).transpose(1, 2)
+        f = self.temporal_conv(f).squeeze(-1)
+        f = self.dropout(f)
+        return self.classifier(f)
+
+
+class NormalInputMotion(BearingQCCFeatureMotion):
+    """BearingQCCFeatureMotion with xyz replaced by per-point local normals."""
+
+    def __init__(self, *args, knn_k_normal=10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.knn_k_normal = knn_k_normal
+
+    def extract_features(self, inputs, aux_input=None):
+        if isinstance(inputs, dict):
+            pts = inputs["points"]
+        else:
+            pts = inputs
+        orig_shape = pts.shape
+        if pts.dim() == 4:
+            B, F_, P, C = orig_shape
+            xyz_full = pts[..., :3].float()
+        elif pts.dim() == 3:
+            B, N, C = orig_shape
+            F_ = N // self.pts_size
+            P = self.pts_size
+            xyz_full = pts[..., :3].float().view(B, F_, P, 3)
+        else:
+            return super().extract_features(inputs, aux_input=aux_input)
+
+        # Compute local normals per frame.
+        normals = LocalNormalOnlyMotion._compute_local_normals(
+            xyz_full, self.knn_k_normal
+        ).detach()                                                    # (B, F, P, 3)
+
+        pts_new = pts.clone()
+        if pts.dim() == 4:
+            pts_new[..., :3] = normals
+        else:
+            pts_new[..., :3] = normals.view(B, N, 3)
+
+        if isinstance(inputs, dict):
+            new_inputs = dict(inputs)
+            new_inputs["points"] = pts_new
+        else:
+            new_inputs = pts_new
+
+        return super().extract_features(new_inputs, aux_input=aux_input)
+
+
+class TopsInputMotion(BearingQCCFeatureMotion):
+    """BearingQCCFeatureMotion with xyz replaced by unit direction from frame centroid."""
+
+    def extract_features(self, inputs, aux_input=None):
+        if isinstance(inputs, dict):
+            pts = inputs["points"]
+        else:
+            pts = inputs
+        if pts.dim() == 4:
+            B, F_, P, C = pts.shape
+            xyz_full = pts[..., :3].float()
+        elif pts.dim() == 3:
+            B, N, C = pts.shape
+            F_ = N // self.pts_size
+            P = self.pts_size
+            xyz_full = pts[..., :3].float().view(B, F_, P, 3)
+        else:
+            return super().extract_features(inputs, aux_input=aux_input)
+
+        centroid = xyz_full.mean(dim=2, keepdim=True)                 # (B, F, 1, 3)
+        rel = xyz_full - centroid                                     # (B, F, P, 3)
+        rel_norm = rel.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        direction = (rel / rel_norm).detach()                         # (B, F, P, 3)
+
+        pts_new = pts.clone()
+        if pts.dim() == 4:
+            pts_new[..., :3] = direction
+        else:
+            pts_new[..., :3] = direction.view(B, N, 3)
+
+        if isinstance(inputs, dict):
+            new_inputs = dict(inputs)
+            new_inputs["points"] = pts_new
+        else:
+            new_inputs = pts_new
+
+        return super().extract_features(new_inputs, aux_input=aux_input)
+
+
+class TopsXYZInputMotion(BearingQCCFeatureMotion):
+    """XYZ + centroid-radial direction (7 channels) through full architecture."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        hidden1 = self.edgeconv[0].out_channels
+        self.edgeconv = nn.Sequential(
+            nn.Conv2d(14, hidden1, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden1),
+            nn.LeakyReLU(negative_slope=0.2),
+        )
+
+    def extract_features(self, inputs, aux_input=None):
+        if isinstance(inputs, dict):
+            points = inputs["points"]
+            aux_unpacked = inputs
+        else:
+            points = inputs
+            aux_unpacked = None
+
+        has_corr = (
+            aux_unpacked is not None
+            and "orig_flat_idx" in aux_unpacked
+            and "corr_full_target_idx" in aux_unpacked
+            and "corr_full_weight" in aux_unpacked
+        )
+
+        if has_corr and not self.decouple_sampling:
+            sampled, corr_matched = self._correspondence_guided_sample(
+                points[..., :4], aux_unpacked)
+        else:
+            sampled = self._sample_points(points[..., :4])
+            corr_matched = None
+
+        sampled = sampled[..., :4]
+        batch_size, num_frames, pts_per_frame, _ = sampled.shape
+
+        # Tops direction from frame centroid, computed on sampled xyz.
+        xyz = sampled[..., :3]
+        centroid = xyz.mean(dim=2, keepdim=True)
+        rel = xyz - centroid
+        rel_norm = rel.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        tops = (rel / rel_norm).detach()                          # (B, F, P, 3)
+        sampled_7 = torch.cat([sampled, tops], dim=-1)             # (B, F, P, 7)
+
+        # Rigidity from xyz+time only.
+        rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
+            sampled, num_frames, knn_k=self.bearing_knn_k,
+            corr_matched=corr_matched)
+
+        point_features = sampled_7.reshape(batch_size, -1, 7).transpose(1, 2).contiguous()
+        encoded = self._encode_to_pre_merge(point_features)
+
+        if not self.disable_rigidity:
+            modulation = self.rigidity_proj(rigidity)
+            encoded = encoded * (1.0 + modulation)
+
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+        encoded = self.merge_proj(self.merge_quaternions(encoded))
+        pooled_max = encoded.max(dim=-1).values
+        attention = torch.softmax(self.readout_attention(encoded), dim=-1)
+        pooled_attn = torch.sum(encoded * attention, dim=-1)
+        return torch.cat((pooled_max, pooled_attn), dim=1)
+
+
+class PolarBearingQCCFeatureMotion(BearingQCCFeatureMotion):
+    """BearingQCCFeatureMotion with xyz replaced by polar (tops + magnitude).
+
+    Input channels (5 total): [dir_x, dir_y, dir_z, |p-centroid|, time]
+    - dir = (p - frame_centroid) / |p - frame_centroid|   (unit direction)
+    - |p - centroid| = radial magnitude
+    Rigidity is still computed from the real sampled xyz (first 3 channels of
+    the pre-swap tensor), so the bearing-QCC geometric signal is preserved.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Rebuild first EdgeConv conv for 5-channel input (doubled by graph = 10).
+        hidden1 = self.edgeconv[0].out_channels
+        self.edgeconv = nn.Sequential(
+            nn.Conv2d(10, hidden1, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden1),
+            nn.LeakyReLU(negative_slope=0.2),
+        )
+
+    def extract_features(self, inputs, aux_input=None):
+        if isinstance(inputs, dict):
+            points = inputs["points"]
+            aux_unpacked = inputs
+        else:
+            points = inputs
+            aux_unpacked = None
+
+        has_corr = (
+            aux_unpacked is not None
+            and "orig_flat_idx" in aux_unpacked
+            and "corr_full_target_idx" in aux_unpacked
+            and "corr_full_weight" in aux_unpacked
+        )
+
+        if has_corr and not self.decouple_sampling:
+            sampled, corr_matched = self._correspondence_guided_sample(
+                points[..., :4], aux_unpacked
+            )
+        else:
+            sampled = self._sample_points(points[..., :4])
+            corr_matched = None
+
+        sampled = sampled[..., :4]                                    # (B, F, P, 4) = xyz+time
+        batch_size, num_frames, pts_per_frame, _ = sampled.shape
+
+        # Rigidity from real xyz+time (unchanged).
+        rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
+            sampled, num_frames, knn_k=self.bearing_knn_k,
+            corr_matched=corr_matched,
+        )
+
+        # Polar reparameterization of xyz.
+        xyz = sampled[..., :3]
+        time_ch = sampled[..., 3:4]
+        centroid = xyz.mean(dim=2, keepdim=True)
+        rel = xyz - centroid
+        magnitude = rel.norm(dim=-1, keepdim=True).clamp(min=1e-6)    # (B, F, P, 1)
+        direction = (rel / magnitude).detach()                         # (B, F, P, 3)
+        sampled_5 = torch.cat([direction, magnitude, time_ch], dim=-1)  # (B, F, P, 5)
+
+        point_features = sampled_5.reshape(batch_size, -1, 5).transpose(1, 2).contiguous()
+        encoded = self._encode_to_pre_merge(point_features)
+
+        if not self.disable_rigidity:
+            modulation = self.rigidity_proj(rigidity)
+            encoded = encoded * (1.0 + modulation)
+
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+        encoded = self.merge_proj(self.merge_quaternions(encoded))
+        pooled_max = encoded.max(dim=-1).values
+        attention = torch.softmax(self.readout_attention(encoded), dim=-1)
+        pooled_attn = torch.sum(encoded * attention, dim=-1)
+        return torch.cat((pooled_max, pooled_attn), dim=1)
+
+
+class VelocityPolarBearingQCCFeatureMotion(BearingQCCFeatureMotion):
+    """BearingQCCFeatureMotion with xyz replaced by velocity + polar."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        hidden1 = self.edgeconv[0].out_channels
+        # 8-ch input -> graph doubles to 16
+        self.edgeconv = nn.Sequential(
+            nn.Conv2d(16, hidden1, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden1),
+            nn.LeakyReLU(negative_slope=0.2),
+        )
+
+    def extract_features(self, inputs, aux_input=None):
+        if isinstance(inputs, dict):
+            points = inputs["points"]
+            aux_unpacked = inputs
+        else:
+            points = inputs
+            aux_unpacked = None
+
+        has_corr = (
+            aux_unpacked is not None
+            and "orig_flat_idx" in aux_unpacked
+            and "corr_full_target_idx" in aux_unpacked
+            and "corr_full_weight" in aux_unpacked
+        )
+
+        if has_corr and not self.decouple_sampling:
+            sampled, corr_matched = self._correspondence_guided_sample(
+                points[..., :4], aux_unpacked
+            )
+        else:
+            sampled = self._sample_points(points[..., :4])
+            corr_matched = None
+
+        sampled = sampled[..., :4]                                   # (B, F, P, 4)
+        batch_size, num_frames, pts_per_frame, _ = sampled.shape
+
+        # Rigidity from real xyz+time.
+        rigidity, corr_valid_ratio = _compute_bearing_qcc_aligned(
+            sampled, num_frames, knn_k=self.bearing_knn_k,
+            corr_matched=corr_matched,
+        )
+
+        xyz = sampled[..., :3]
+        time_ch = sampled[..., 3:4]
+
+        # Polar from per-frame centroid.
+        centroid = xyz.mean(dim=2, keepdim=True)
+        rel = xyz - centroid
+        magnitude = rel.norm(dim=-1, keepdim=True).clamp(min=1e-6)    # (B, F, P, 1)
+        direction = (rel / magnitude).detach()                         # (B, F, P, 3)
+
+        # Velocity (forward diff; last frame = backward diff).
+        # xyz: (B, F, P, 3); velocity at t = xyz[t+1] - xyz[t]
+        vel = torch.zeros_like(xyz)
+        vel[:, :-1] = xyz[:, 1:] - xyz[:, :-1]
+        vel[:, -1] = xyz[:, -1] - xyz[:, -2]
+
+        # 8-ch input
+        sampled_8 = torch.cat([vel, direction, magnitude, time_ch], dim=-1)  # (B, F, P, 8)
+        point_features = sampled_8.reshape(batch_size, -1, 8).transpose(1, 2).contiguous()
+        encoded = self._encode_to_pre_merge(point_features)
+
+        if not self.disable_rigidity:
+            modulation = self.rigidity_proj(rigidity)
+            encoded = encoded * (1.0 + modulation)
+
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+        encoded = self.merge_proj(self.merge_quaternions(encoded))
+        pooled_max = encoded.max(dim=-1).values
+        attention = torch.softmax(self.readout_attention(encoded), dim=-1)
+        pooled_attn = torch.sum(encoded * attention, dim=-1)
+        return torch.cat((pooled_max, pooled_attn), dim=1)
+

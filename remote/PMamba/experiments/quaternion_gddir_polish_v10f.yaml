@@ -1,0 +1,56 @@
+# Exp 10f: gddir polish on top of no-aux warm-restart (staging strategy)
+#
+# Compact name: P[P[Sc_Co_none_pts48-256_e140]E125_Co_none_pts48-256_e140]E140_Nc_gddir01_pts48-256_e140
+#
+# Chain: v6q (scratch, no aux) -> v8a (restart, no aux, 80.08%) -> v10f (gddir polish)
+#
+# Tests: can gddir improve features that warm-restart already optimized?
+# v8a hit 80.08% without aux. Adding gddir at this stage either:
+#   > 80.08% -> gddir adds value on top of restart
+#   ~ 80%   -> neutral (restart already found the optimum)
+#   < 80%   -> gddir hurts converged features (like 10e did)
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_gddir_polish_v10f/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 1
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+weights: ./work_dir/quaternion_noaux_warmrestart_v8a/epoch140_model.pt
+strict_load: false
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step: [100, 120, 130]
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 96
+  num_classes: 25
+  hidden_dims: [64, 256]
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.1
+  qcc_variant: grounded_disp_dir

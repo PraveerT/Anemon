@@ -1,0 +1,62 @@
+# Exp 14a: Cycle-consistency via SIDE projection (v8a rigidity stays pristine)
+#
+# Compact name: P[P[Sc_Co_none_pts48-256_e140]E125_Co_none_pts48-256_e140]E140_Nc_ccqS_pts256_e140
+# Family: Sc_Co_none_pts48-256_e140 (same chain as v8a, depth 2)
+#
+# Fix for v13b's plateau: instead of expanding rigidity_proj to 2 channels
+# (disrupts v8a's learned weights), add a SEPARATE cycle_proj module.
+# - rigidity_proj: unchanged, 1-channel, loads from v8a cleanly
+# - cycle_proj: new Conv1d 1->hidden_dim, init zero
+# - total modulation = rigidity_proj(geom_rig) + cycle_proj(cyc_rig)
+#
+# At epoch 1 cycle_proj outputs zero -> model identical to v8a. Only deviates
+# as cycle_proj learns. No disruption to existing learned features.
+#
+# Hypothesis: v13b's 79.46 ceiling is due to rigidity_proj perturbation.
+# With pristine v8a rigidity, v14a should START at 80.08 and climb higher
+# (or at worst stay at 80.08).
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/quaternion_cycrig_side_warmrestart_v14a/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 1
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+weights: ./work_dir/quaternion_noaux_warmrestart_v8a/epoch140_model.pt
+strict_load: false
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0005
+  step: [100, 120, 130]
+  weight_decay: 0.01
+  start_epoch: 0
+  nesterov: false
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: false
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: false
+model: models.reqnn_motion.BearingQCCFeatureMotion
+model_args:
+  pts_size: 256
+  num_classes: 25
+  hidden_dims: [64, 256]
+  dropout: 0.05
+  edgeconv_k: 20
+  merge_eps: 1.0e-06
+  so3_weight: 0.0
+  rotation_sigma: 0.3
+  bearing_knn_k: 10
+  qcc_weight: 0.0
+  qcc_variant: cycle_rigidity_side
