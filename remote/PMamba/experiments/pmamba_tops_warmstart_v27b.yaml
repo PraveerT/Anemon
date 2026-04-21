@@ -1,0 +1,61 @@
+# Exp 27b: PMamba+tops WARM-START from pmamba_branch/epoch110.
+# Family: P[PMamba_xyz_e120]E110_TopsStage1_pts256_e60
+#
+# At init, stage1(xyz + tops) == pmamba_stage1(xyz) exactly:
+#   - all weights loaded from pmamba_branch/epoch110
+#   - stage1 first-conv gets pmamba's 4-ch weights in cols 0-3, zeros in cols 4-6
+# Guarantees ≥ 89.83% floor at init (before any training).
+# Training can only improve by learning tops signal; cannot make it worse
+# (weight decay aside).
+#
+# Recipe: finetune (lower LR, shorter schedule).
+
+dataloader: nvidia_dataloader.NvidiaLoader
+
+phase: train
+num_epoch: 40
+work_dir: ./work_dir/pmamba_tops_v27b/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false    # static max pts to match pmamba's final regime
+
+weights: ./work_dir/pmamba_tops_v27b/pmamba_tops_warmstart_init.pt
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.000012          # pmamba's post-step-100 LR
+  step:
+  - 25
+  - 35
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+model: models.motion.PMambaTopsMotion
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8

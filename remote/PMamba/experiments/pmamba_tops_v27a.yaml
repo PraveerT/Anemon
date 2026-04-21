@@ -34,10 +34,10 @@ optimizer_args:
   optimizer: Adam
   base_lr: 0.00012
   step:
-  - 70
-  - 90
-  - 110
-  weight_decay: 0.01
+  - 100
+  - 160
+  - 180
+  weight_decay: 0.03
   start_epoch: 0
   nesterov: false
 
