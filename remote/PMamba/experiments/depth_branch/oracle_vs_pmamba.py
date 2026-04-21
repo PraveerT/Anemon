@@ -13,7 +13,7 @@ import torch
 
 from models.motion import Motion
 from nvidia_dataloader import NvidiaLoader
-from depth_branch.model import DepthCNNLSTM, DepthCNNLSTMQCC
+from depth_branch.model import DepthCNNLSTM, DepthCNNLSTMQCC, DepthCNNLSTMPartQCC
 from depth_branch.dataloader import DepthVideoLoader
 
 
@@ -21,9 +21,9 @@ VERSION = sys.argv[1] if len(sys.argv) > 1 else 'v1'
 _ARG = sys.argv[2] if len(sys.argv) > 2 else 'best'
 DEPTH_CKPT = 'best_model' if _ARG == 'best' else f'epoch{_ARG}_model'
 DEPTH_TAG = _ARG
-USE_TOPS = VERSION in ('v2', 'v3')
+USE_TOPS = VERSION in ('v2', 'v3', 'v4')
 IN_CHANNELS = 4 if USE_TOPS else 1
-HAS_QCC = VERSION == 'v3'
+QCC_KIND = {'v3': 'global', 'v4': 'part'}.get(VERSION)
 PTS = 256
 N_TTA_PMAMBA = 3
 
@@ -32,14 +32,21 @@ pm = Motion(num_classes=25, pts_size=PTS, knn=[32, 24, 48, 24], topk=8).cuda()
 cp = torch.load('work_dir/pmamba_branch/epoch110_model.pt', map_location='cpu')
 pm.load_state_dict(cp.get('model_state_dict', cp), strict=False); pm.eval()
 
-# --- load DepthCNNLSTM (or QCC variant if v3) ---
-dm_cls = DepthCNNLSTMQCC if HAS_QCC else DepthCNNLSTM
+# --- load DepthCNNLSTM (plain, global-QCC, or partwise-QCC) ---
+if QCC_KIND == 'global':
+    dm_cls = DepthCNNLSTMQCC
+elif QCC_KIND == 'part':
+    dm_cls = DepthCNNLSTMPartQCC
+else:
+    dm_cls = DepthCNNLSTM
 dm_kwargs = dict(
     num_classes=25, in_channels=IN_CHANNELS, feat_dim=256,
     lstm_hidden=256, lstm_layers=2, bidirectional=True, dropout=0.3,
 )
-if HAS_QCC:
+if QCC_KIND == 'global':
     dm_kwargs.update(dict(qcc_hidden=64, qcc_weight=0.1))
+elif QCC_KIND == 'part':
+    dm_kwargs.update(dict(qcc_hidden=64, qcc_weight=0.1, part_grid=(2, 3)))
 dm = dm_cls(**dm_kwargs).cuda()
 cd = torch.load(f'work_dir/depth_branch/{VERSION}/{DEPTH_CKPT}.pt', map_location='cpu')
 dm.load_state_dict(cd.get('model_state_dict', cd), strict=False); dm.eval()

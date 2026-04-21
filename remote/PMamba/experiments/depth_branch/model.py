@@ -250,6 +250,131 @@ class PartQCCHead(nn.Module):
         return F.normalize(q, dim=-1, eps=1e-6)
 
 
+def quat_from_vectors(v1, v2, eps=1e-6):
+    """Shortest-arc unit quaternion rotating v1 to v2. Inputs (..., 3).
+
+    Antipodal case (v1 ~ -v2) is left unresolved; F.normalize folds it to the
+    identity, which is fine as a rare degenerate. For our use case (mean-tops
+    directions in adjacent frames) antipodal never occurs in practice.
+    """
+    v1 = F.normalize(v1, dim=-1, eps=eps)
+    v2 = F.normalize(v2, dim=-1, eps=eps)
+    d = (v1 * v2).sum(-1, keepdim=True)                         # cos(theta)
+    axis = torch.cross(v1, v2, dim=-1)                          # sin(theta) * n
+    w = 1.0 + d                                                 # 2 * cos^2(theta/2)
+    q = torch.cat([w, axis], dim=-1)                            # (..., 4) [w, x, y, z]
+    return F.normalize(q, dim=-1, eps=eps)
+
+
+class DepthCNNLSTMTopsQCC(DepthCNNLSTM):
+    """Option-C QCC: tops-anchored quaternion supervision.
+
+    Observable target: per frame, mean tops direction m_t (unit vector over
+    hand mask). Shortest-arc rotation m_t -> m_{t+1} gives q_obs_t. QCCHead
+    predicts q_pred_t from (CNN feat_t, CNN feat_{t+1}) and is supervised to
+    match q_obs_t via 1 - (q_pred . q_obs)^2 (sign-ambiguous, unit-quat safe).
+
+    Because q_obs is a real rotation signal and usually non-identity, the
+    trivial identity-output collapse of Options A/B is not a valid minimum.
+
+    Requires in_channels >= 4 (depth + tops 3ch, uses channels 1:4 as tops).
+    """
+
+    def __init__(
+        self,
+        num_classes=25,
+        in_channels=4,
+        feat_dim=256,
+        lstm_hidden=256,
+        lstm_layers=2,
+        bidirectional=True,
+        dropout=0.3,
+        qcc_hidden=64,
+        qcc_weight=0.1,
+        **kwargs,
+    ):
+        assert in_channels >= 4, "tops-QCC needs tops channels (input 1:4)"
+        super().__init__(
+            num_classes=num_classes, in_channels=in_channels, feat_dim=feat_dim,
+            lstm_hidden=lstm_hidden, lstm_layers=lstm_layers,
+            bidirectional=bidirectional, dropout=dropout,
+        )
+        self.qcc_head = QCCHead(feat_dim=feat_dim, hidden=qcc_hidden)
+        self.qcc_weight = qcc_weight
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    def _mean_tops_per_frame(self, inputs):
+        """inputs: (B, T, C, H, W) with channels 1:4 = tops. Returns (B, T, 3)."""
+        tops = inputs[:, :, 1:4]                                # (B, T, 3, H, W)
+        m = tops.sum(dim=(-2, -1))                              # (B, T, 3), zero outside mask
+        return m                                                # unnormalized (ok for quat_from_vectors)
+
+    def forward(self, inputs):
+        if isinstance(inputs, dict):
+            inputs = inputs["depth"]
+        x = inputs.float()
+        B, T, C, H, W = x.shape
+
+        # Classifier path
+        x_flat = x.view(B * T, C, H, W)
+        feat = self.cnn(x_flat).view(B, T, -1)                  # (B, T, D)
+
+        # --- Option-C QCC aux ---
+        if self.training and self.qcc_weight > 0:
+            # Head prediction
+            q_pred = self.qcc_head(feat)                        # (B, T, 4)
+
+            # Observable target: rotation from m_t to m_{t+1} (cyclic)
+            with torch.no_grad():
+                m = self._mean_tops_per_frame(x)                # (B, T, 3)
+                m_next = torch.roll(m, shifts=-1, dims=1)
+                # frames with zero tops magnitude -> mark invalid
+                valid = (m.norm(dim=-1) > 1e-4) & (m_next.norm(dim=-1) > 1e-4)
+                q_obs = quat_from_vectors(m, m_next)            # (B, T, 4)
+
+            # Loss: 1 - (q_pred . q_obs)^2  (sign-invariant cos^2)
+            dot = (q_pred * q_obs).sum(-1)                      # (B, T)
+            pair_loss = 1.0 - dot ** 2                          # (B, T)
+            valid_f = valid.float()
+            denom = valid_f.sum().clamp(min=1.0)
+            qcc_raw = (pair_loss * valid_f).sum() / denom
+            self.latest_aux_loss = self.qcc_weight * qcc_raw
+
+            with torch.no_grad():
+                # Angle between predicted and observed (rad)
+                abs_dot = dot.abs().clamp(0.0, 1.0)
+                angle_mean = (2.0 * torch.arccos(abs_dot)) * valid_f
+                angle_mean = angle_mean.sum() / denom
+                valid_ratio = valid_f.mean()
+                # How non-trivial the observed rotations are (sanity check)
+                obs_nontriv = (1.0 - q_obs[..., 0] ** 2) * valid_f
+                obs_nontriv = obs_nontriv.sum() / denom
+                self.latest_aux_metrics = {
+                    'qcc_raw': qcc_raw.detach(),
+                    'qcc_forward': qcc_raw.detach(),
+                    'qcc_backward': angle_mean.detach(),
+                    'qcc_valid_ratio': obs_nontriv.detach(),
+                }
+        else:
+            self.latest_aux_loss = None
+            self.latest_aux_metrics = {}
+
+        # Classifier continues
+        seq, _ = self.lstm(feat)
+        t_mean = seq.mean(dim=1)
+        t_max = seq.max(dim=1).values
+        pooled = torch.cat([t_mean, t_max], dim=-1)
+        pooled = self.dropout(pooled)
+        return self.classifier(pooled)
+
+    def get_auxiliary_loss(self):
+        return self.latest_aux_loss
+
+    def get_auxiliary_metrics(self):
+        return self.latest_aux_metrics
+
+
 class DepthCNNLSTMPartQCC(DepthCNNLSTM):
     """Option-B QCC: per-part cycle consistency on CNN 7x7 feat grid.
 
