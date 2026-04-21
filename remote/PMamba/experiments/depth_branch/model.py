@@ -45,11 +45,15 @@ class DepthCNN(nn.Module):
         self.block3 = ConvBlock(128, feat_dim, stride=1)
         self.pool = nn.AdaptiveAvgPool2d(1)
 
-    def forward(self, x):
+    def forward_features(self, x):
         x = self.stem(x)
         x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
+        return x                                         # (B, D, 7, 7)
+
+    def forward(self, x):
+        x = self.forward_features(x)
         x = self.pool(x)
         return x.flatten(1)
 
@@ -203,6 +207,133 @@ class DepthCNNLSTMQCC(DepthCNNLSTM):
         pooled = torch.cat([t_mean, t_max], dim=-1)
         pooled = self.dropout(pooled)
         return self.classifier(pooled)
+
+    def get_auxiliary_loss(self):
+        return self.latest_aux_loss
+
+    def get_auxiliary_metrics(self):
+        return self.latest_aux_metrics
+
+
+class PartQCCHead(nn.Module):
+    """Partwise quaternion predictor.
+
+    Pool 7x7 feat map into K=6 parts (2 rows x 3 cols), predict q_k^{t->t+1} per
+    part per frame-pair via a shared MLP.
+    """
+
+    def __init__(self, feat_dim, hidden=64, part_grid=(2, 3)):
+        super().__init__()
+        self.part_grid = part_grid
+        self.num_parts = part_grid[0] * part_grid[1]
+        self.part_pool = nn.AdaptiveAvgPool2d(part_grid)
+        self.mlp = nn.Sequential(
+            nn.Linear(feat_dim * 2, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, 4),
+        )
+        nn.init.normal_(self.mlp[-1].weight, std=0.01)
+        with torch.no_grad():
+            self.mlp[-1].bias.copy_(torch.tensor([1.0, 0.0, 0.0, 0.0]))
+
+    def extract_parts(self, feat_map):
+        # feat_map: (B*T, D, 7, 7) -> (B*T, D, Ph, Pw) -> (B*T, K, D)
+        pooled = self.part_pool(feat_map)                       # (B*T, D, Ph, Pw)
+        b_t, D, Ph, Pw = pooled.shape
+        return pooled.view(b_t, D, Ph * Pw).transpose(1, 2).contiguous()
+
+    def forward(self, part_feats):
+        # part_feats: (B, T, K, D)
+        nxt = torch.roll(part_feats, shifts=-1, dims=1)         # (B, T, K, D)
+        pair = torch.cat([part_feats, nxt], dim=-1)             # (B, T, K, 2D)
+        q = self.mlp(pair)                                      # (B, T, K, 4)
+        return F.normalize(q, dim=-1, eps=1e-6)
+
+
+class DepthCNNLSTMPartQCC(DepthCNNLSTM):
+    """Option-B QCC: per-part cycle consistency on CNN 7x7 feat grid.
+
+    Partition spatial feat into K=6 parts, predict q_k^{t->t+1} per part with a
+    shared MLP, compose per-part cycle around T frames, push composed toward
+    identity (|w|^2 -> 1). Classifier path unchanged (uses global AvgPool).
+    """
+
+    def __init__(
+        self,
+        num_classes=25,
+        in_channels=1,
+        feat_dim=256,
+        lstm_hidden=256,
+        lstm_layers=2,
+        bidirectional=True,
+        dropout=0.3,
+        qcc_hidden=64,
+        qcc_weight=0.1,
+        part_grid=(2, 3),
+        **kwargs,
+    ):
+        super().__init__(
+            num_classes=num_classes, in_channels=in_channels, feat_dim=feat_dim,
+            lstm_hidden=lstm_hidden, lstm_layers=lstm_layers,
+            bidirectional=bidirectional, dropout=dropout,
+        )
+        self.qcc_head = PartQCCHead(feat_dim=feat_dim, hidden=qcc_hidden, part_grid=tuple(part_grid))
+        self.num_parts = self.qcc_head.num_parts
+        self.qcc_weight = qcc_weight
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
+    def forward(self, inputs):
+        if isinstance(inputs, dict):
+            inputs = inputs["depth"]
+        x = inputs.float()
+        B, T, C, H, W = x.shape
+        x = x.view(B * T, C, H, W)
+        feat_map = self.cnn.forward_features(x)                 # (B*T, D, 7, 7)
+
+        # Classifier path: global pool -> LSTM -> classifier
+        pooled = self.cnn.pool(feat_map).flatten(1)             # (B*T, D)
+        feat = pooled.view(B, T, -1)                            # (B, T, D)
+
+        # QCC path: partition -> per-part quat -> cycle
+        if self.training and self.qcc_weight > 0:
+            parts = self.qcc_head.extract_parts(feat_map)       # (B*T, K, D)
+            K = parts.shape[1]
+            parts = parts.view(B, T, K, -1)                     # (B, T, K, D)
+            q = self.qcc_head(parts)                            # (B, T, K, 4)
+
+            # Compose per part around the cycle
+            q_comp = q[:, 0]                                    # (B, K, 4)
+            for t in range(1, T):
+                q_comp = quat_mul(q_comp, q[:, t])
+
+            w_sq = q_comp[..., 0] ** 2                          # (B, K)
+            qcc_raw = (1.0 - w_sq).mean()
+            self.latest_aux_loss = self.qcc_weight * qcc_raw
+
+            with torch.no_grad():
+                abs_w = q_comp[..., 0].abs().clamp(0.0, 1.0)
+                angle_mean = (2.0 * torch.arccos(abs_w)).mean()
+                # Diagnostic: per-step avg non-identity pressure (diagnostic only,
+                # not added to loss). High -> individual q's depart from [1,0,0,0].
+                step_nontrivial = (1.0 - q[..., 0] ** 2).mean()
+                self.latest_aux_metrics = {
+                    'qcc_raw': qcc_raw.detach(),
+                    'qcc_forward': qcc_raw.detach(),
+                    'qcc_backward': angle_mean.detach(),
+                    'qcc_valid_ratio': step_nontrivial.detach(),
+                }
+        else:
+            self.latest_aux_loss = None
+            self.latest_aux_metrics = {}
+
+        # Classifier continues from pooled features
+        seq, _ = self.lstm(feat)
+        t_mean = seq.mean(dim=1)
+        t_max = seq.max(dim=1).values
+        pooled_time = torch.cat([t_mean, t_max], dim=-1)
+        pooled_time = self.dropout(pooled_time)
+        return self.classifier(pooled_time)
 
     def get_auxiliary_loss(self):
         return self.latest_aux_loss
