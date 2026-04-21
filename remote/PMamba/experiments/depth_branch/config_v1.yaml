@@ -1,0 +1,52 @@
+# Depth CNN-LSTM v1: per-frame 2D CNN + BiLSTM over 32 frames of 112x112 depth.
+# Baseline for structural-diversity branch (raw depth pixels, not point clouds).
+
+dataloader: depth_branch.dataloader.DepthVideoLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/depth_branch/v1/
+batch_size: 16
+test_batch_size: 4
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 10
+
+framesize: 32
+pts_size: 112   # img_size, not actually pts; kept for main.py compat
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.001
+  step:
+  - 80
+  - 110
+  - 130
+  weight_decay: 0.0001
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  img_size: 112
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  img_size: 112
+  hflip_prob: 0.0
+  time_cutout_prob: 0.0
+
+model: depth_branch.model.DepthCNNLSTM
+model_args:
+  num_classes: 25
+  in_channels: 1
+  feat_dim: 256
+  lstm_hidden: 256
+  lstm_layers: 2
+  bidirectional: true
+  dropout: 0.3
