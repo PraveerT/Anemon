@@ -68,12 +68,15 @@ class DepthCNNLSTM(nn.Module):
         lstm_layers=2,
         bidirectional=True,
         dropout=0.3,
+        rigidity_dim=0,                     # K; 0 disables rigidity head
         **kwargs,
     ):
         super().__init__()
         self.cnn = DepthCNN(in_channels=in_channels, feat_dim=feat_dim)
+        self.rigidity_dim = rigidity_dim
+        lstm_input = feat_dim + rigidity_dim
         self.lstm = nn.LSTM(
-            input_size=feat_dim,
+            input_size=lstm_input,
             hidden_size=lstm_hidden,
             num_layers=lstm_layers,
             batch_first=True,
@@ -85,13 +88,25 @@ class DepthCNNLSTM(nn.Module):
         self.classifier = nn.Linear(lstm_hidden * mult * 2, num_classes)
 
     def forward(self, inputs):
+        # Accept: tensor (legacy), or (tensor, rigidity_tensor) tuple when
+        # rigidity_dim > 0.
+        rigidity = None
+        if isinstance(inputs, (tuple, list)):
+            if len(inputs) == 2:
+                inputs, rigidity = inputs
+            else:
+                inputs = inputs[0]
         if isinstance(inputs, dict):
             inputs = inputs["depth"]
         x = inputs.float()
         B, T, C, H, W = x.shape
         x = x.view(B * T, C, H, W)
         feat = self.cnn(x)
-        feat = feat.view(B, T, -1)
+        feat = feat.view(B, T, -1)                       # (B, T, feat_dim)
+
+        if self.rigidity_dim > 0:
+            assert rigidity is not None, "rigidity_dim>0 but no rigidity tensor supplied"
+            feat = torch.cat([feat, rigidity.float()], dim=-1)   # (B, T, feat_dim+K)
 
         seq, _ = self.lstm(feat)
         t_mean = seq.mean(dim=1)

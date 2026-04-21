@@ -4,12 +4,18 @@ Loads raw depth .npy (shape (T_raw, 240, 320, 1), uint8), key-frame-samples to
 fixed T, resizes to HxW, normalizes to [0, 1].
 
 Options:
-  use_tops=True -> compute per-pixel tops field (3-ch uvd centroid-relative
-                   unit direction) and concat with depth -> 4-ch output.
+  use_tops=True     -> compute per-pixel tops field (3-ch uvd centroid-relative
+                       unit direction) and concat with depth -> 4-ch output.
+  use_rigidity=True -> also return per-frame rigidity summary features loaded
+                       from a precomputed {stem}_rigidity.npy file of shape
+                       (T_raw, K). Key-frame sampled to T and returned as a
+                       second tensor.
 
-Returns: tensor (T, C, H, W) float32, label int, filename str.
-         C = 1 (depth-only) or 4 (depth + tops).
-Subject split matches NvidiaLoader.
+Returns: when use_rigidity=False:
+           (depth_tensor, label, line)       where depth_tensor is (T, C, H, W)
+         when use_rigidity=True:
+           ((depth_tensor, rigidity_tensor), label, line)
+           with rigidity_tensor of shape (T, K) float32.
 """
 import os
 import re
@@ -32,6 +38,8 @@ class DepthVideoLoader(data.Dataset):
         phase="train",
         img_size=112,
         use_tops=False,
+        use_rigidity=False,
+        rigidity_norm_scale=8.0,
         hflip_prob=0.5,
         time_cutout_prob=0.5,
         time_cutout_max_ratio=0.2,
@@ -41,6 +49,8 @@ class DepthVideoLoader(data.Dataset):
         self.valid_subject = valid_subject
         self.img_size = img_size
         self.use_tops = use_tops
+        self.use_rigidity = use_rigidity
+        self.rigidity_norm_scale = rigidity_norm_scale
         self.hflip_prob = hflip_prob
         self.time_cutout_prob = time_cutout_prob
         self.time_cutout_max_ratio = time_cutout_max_ratio
@@ -54,8 +64,11 @@ class DepthVideoLoader(data.Dataset):
             v = np.arange(img_size, dtype=np.float32) / img_size  # (H,)
             self._uu, self._vv = np.meshgrid(u, v)  # (H, W)
 
-        print(f"DepthVideoLoader[{phase}]: {len(self.inputs_list)} samples "
-              f"({'depth+tops 4ch' if use_tops else 'depth 1ch'})")
+        extra = []
+        if use_tops: extra.append("tops 3ch")
+        if use_rigidity: extra.append("rigidity K-scalars")
+        desc = "depth 1ch" + ("" if not extra else " + " + " + ".join(extra))
+        print(f"DepthVideoLoader[{phase}]: {len(self.inputs_list)} samples ({desc})")
 
     def __len__(self):
         return len(self.inputs_list)
@@ -96,8 +109,22 @@ class DepthVideoLoader(data.Dataset):
             arr = np.concatenate([depth, tops], axis=1)            # (T, 4, H, W)
         else:
             arr = depth
+        depth_tensor = torch.from_numpy(arr).float()
 
-        return torch.from_numpy(arr).float(), label, line
+        if self.use_rigidity:
+            rig_path = depth_path.replace('.npy', '_rigidity.npy')
+            raw_rig = np.load(rig_path).astype(np.float32)
+            # Preprocessing already key-frame-sampled to T=framerate; fall back
+            # to re-indexing if the file turned out raw-T shaped.
+            if raw_rig.shape[0] == depth.shape[0]:
+                rig = raw_rig
+            else:
+                rig = raw_rig[idx]
+            rig = rig * self.rigidity_norm_scale
+            rig_tensor = torch.from_numpy(rig).float()
+            return (depth_tensor, rig_tensor), label, line
+
+        return depth_tensor, label, line
 
     def _compute_tops(self, depth):
         """Per-pixel centroid-relative unit direction in normalized uvd space.
