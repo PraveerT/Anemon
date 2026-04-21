@@ -13,3 +13,6 @@ venv/
 htmlcov/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+
+remote-viz/
+viz-qcc/
