@@ -126,13 +126,25 @@ class DepthCNNLSTM(nn.Module):
         feat = self.cnn(x)
         feat = feat.view(B, T, -1)                       # (B, T, feat_dim)
 
-        # v9: per-clip sample weights for CE reweighting. Uses rigidity tensor's
-        # mean channel (channel 0) across frames; higher within-clip std ->
-        # more "articulation dynamics" in the clip -> more CE weight.
-        if self.clip_reweight_beta > 0 and rigidity is not None:
-            mean_per_frame = rigidity[:, :, 0].float()                    # (B, T)
-            clip_std = mean_per_frame.std(dim=1)                          # (B,)
-            self.latest_sample_weights = 1.0 + self.clip_reweight_beta * clip_std
+        # v9 (clean): per-clip CE reweight by within-clip rigidity std, but
+        # batch-normalized and capped so it's scale-invariant and no single
+        # sample dominates. Uses channel 0 = mean residual per frame when
+        # rigidity is the K=6 summary, or the mean-over-points otherwise.
+        if self.clip_reweight_beta != 0 and rigidity is not None:
+            rig = rigidity.float()
+            if rig.dim() == 3:
+                per_frame = rig.mean(dim=-1) if rig.shape[-1] != 6 else rig[:, :, 0]
+            else:
+                per_frame = rig                                           # (B, T)
+            clip_std = per_frame.std(dim=-1)                              # (B,)
+            # Z-score within batch, softplus, cap, normalize to mean 1.
+            mu = clip_std.mean()
+            sd = clip_std.std() + 1e-6
+            z = (clip_std - mu) / sd
+            w = torch.nn.functional.softplus(self.clip_reweight_beta * z)  # (B,)
+            w = torch.clamp(w, max=2.0)
+            w = w * (w.numel() / (w.sum() + 1e-8))                         # mean 1
+            self.latest_sample_weights = w
         else:
             self.latest_sample_weights = None
 
