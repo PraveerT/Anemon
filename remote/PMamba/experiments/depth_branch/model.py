@@ -190,6 +190,29 @@ class DepthCNNLSTM(nn.Module):
     def get_auxiliary_metrics(self):
         return self.latest_aux_metrics
 
+    def extract_features(self, inputs):
+        """Same as forward minus classifier. Used by early-fusion models."""
+        rigidity = None
+        if isinstance(inputs, (tuple, list)) and len(inputs) == 2:
+            inputs, rigidity = inputs
+        elif isinstance(inputs, (tuple, list)):
+            inputs = inputs[0]
+        if isinstance(inputs, dict):
+            inputs = inputs["depth"]
+        x = inputs.float()
+        B, T, C, H, W = x.shape
+        x = x.view(B * T, C, H, W)
+        feat = self.cnn(x)
+        feat = feat.view(B, T, -1)
+        if self.rigidity_dim > 0:
+            assert rigidity is not None
+            feat = torch.cat([feat, rigidity.float()], dim=-1)
+        seq, _ = self.lstm(feat)
+        t_mean = seq.mean(dim=1)
+        t_max = seq.max(dim=1).values
+        pooled = torch.cat([t_mean, t_max], dim=-1)
+        return self.dropout(pooled)
+
 
 class RigidityOnlyClassifier(nn.Module):
     """Sanity probe: classify gesture using ONLY the per-frame rigidity stats.
