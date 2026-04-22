@@ -1,0 +1,56 @@
+# PMamba with rigidity CE reweighting, FROM SCRATCH.
+# Exact schedule mirrors pointlstm.yaml (original PMamba 89.83% baseline):
+# lr 0.00012, step [100,160,180], weight_decay 0.03, 300 epochs,
+# pts_size 96 growing dynamically to 256 by epoch 100.
+# Only swap: dataloader -> NvidiaRigidityLoader, model -> PMambaRigidityReweight (beta=2.0).
+
+dataloader: nvidia_rigidity_loader.NvidiaRigidityLoader
+
+phase: train
+num_epoch: 300
+work_dir: ./work_dir/pmamba_rigidity_scratch/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 100
+  - 160
+  - 180
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  rigidity_per_point: false
+  rigidity_sort: false
+  rigidity_norm_scale: 1.0
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  rigidity_per_point: false
+  rigidity_sort: false
+  rigidity_norm_scale: 1.0
+
+model: models.motion.PMambaRigidityReweight
+model_args:
+  num_classes: 25
+  pts_size: 96
+  knn: [32, 24, 48, 24]
+  topk: 8
+  clip_reweight_beta: 2.0
