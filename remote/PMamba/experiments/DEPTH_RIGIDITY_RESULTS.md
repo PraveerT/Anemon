@@ -14,7 +14,7 @@ test samples.
 | **v2**  | **+ tops 4ch (baseline)**      | **66.39** | **93.36** | **+3.53** | **0.85** | **+0.83** | **17** | **32** |
 | v3–5 | QCC aux losses (3 variants)      | collapse | — | — | — | — | — | — |
 | v6  | rigidity stats concat to LSTM     | 58.92 | 92.95 | +3.11 | 1.00 | +0.00 | 15 | 34 |
-| v7  | aux rigidity-predict head         | — | — | — | — | — | — | — |
+| v7  | aux rigidity-predict head (MSE, λ=0.1) | 64.73 | 92.12 | +2.28 | 0.90 | +0.21 | 11 | 38 |
 | v8  | binary articulation classifier    | — | — | — | — | — | — | — |
 | v9  | per-clip CE weighting             | — | — | — | — | — | — | — |
 | v10 | rigidity-contrastive              | — | — | — | — | — | — | — |

@@ -72,6 +72,7 @@ class DepthCNNLSTM(nn.Module):
         rigidity_aux_dim=0,                 # K; 0 disables aux-predict head (v7)
         rigidity_aux_hidden=64,
         rigidity_aux_weight=0.1,
+        clip_reweight_beta=0.0,            # v9: CE weighting by clip rigidity std (0 disables)
         **kwargs,
     ):
         super().__init__()
@@ -102,6 +103,8 @@ class DepthCNNLSTM(nn.Module):
             )
         self.latest_aux_loss = None
         self.latest_aux_metrics = {}
+        self.clip_reweight_beta = clip_reweight_beta
+        self.latest_sample_weights = None
 
     def forward(self, inputs):
         # Accept: tensor (legacy), or (tensor, rigidity_tensor) tuple when
@@ -119,6 +122,16 @@ class DepthCNNLSTM(nn.Module):
         x = x.view(B * T, C, H, W)
         feat = self.cnn(x)
         feat = feat.view(B, T, -1)                       # (B, T, feat_dim)
+
+        # v9: per-clip sample weights for CE reweighting. Uses rigidity tensor's
+        # mean channel (channel 0) across frames; higher within-clip std ->
+        # more "articulation dynamics" in the clip -> more CE weight.
+        if self.clip_reweight_beta > 0 and rigidity is not None:
+            mean_per_frame = rigidity[:, :, 0].float()                    # (B, T)
+            clip_std = mean_per_frame.std(dim=1)                          # (B,)
+            self.latest_sample_weights = 1.0 + self.clip_reweight_beta * clip_std
+        else:
+            self.latest_sample_weights = None
 
         # Auxiliary rigidity prediction (v7): MSE of per-frame feat -> rigidity stats.
         if self.training and self.rigidity_aux_dim > 0 and self.rigidity_aux_weight > 0:
