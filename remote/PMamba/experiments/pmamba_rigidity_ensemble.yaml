@@ -1,0 +1,60 @@
+# PMamba + Rigidity-only (sorted per-point) ensemble, finetune 20 epochs.
+# Loads PMamba from epoch110 best and rigidity_only_pp best. Fuses via
+# learnable softmax weight on softmax probs. CE on log-fused.
+
+dataloader: nvidia_rigidity_loader.NvidiaRigidityLoader
+
+phase: train
+num_epoch: 20
+work_dir: ./work_dir/pmamba_rigidity_ensemble/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 2
+
+framesize: 32
+pts_size: 96
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.0001
+  step:
+  - 15
+  weight_decay: 0.0001
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  rigidity_per_point: true
+  rigidity_sort: true
+  rigidity_norm_scale: 1.0
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  rigidity_per_point: true
+  rigidity_sort: true
+  rigidity_norm_scale: 1.0
+
+model: models.motion.PMambaRigidityEnsemble
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn: [32, 24, 48, 24]
+  topk: 8
+  rigidity_dim: 256
+  rigidity_hidden: 128
+  rigidity_lstm_layers: 2
+  rigidity_dropout: 0.3
+  pmamba_weights: ./work_dir/pmamba_branch/epoch110_model.pt
+  rigidity_weights: ./work_dir/depth_branch/rigidity_only_pp/best_model.pt
+  freeze_pmamba: false
+  freeze_rigidity: false
+  init_alpha_logit: 2.0

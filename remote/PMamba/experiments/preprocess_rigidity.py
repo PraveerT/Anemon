@@ -23,6 +23,7 @@ from nvidia_dataloader import NvidiaQuaternionQCCParityLoader
 
 P_SAMPLE = 256
 K_FEATS = 6
+SAVE_PER_POINT = True   # also save full (T, P) residual matrix
 
 
 def kabsch_residuals_batch(points: np.ndarray) -> np.ndarray:
@@ -105,7 +106,8 @@ def process_phase(phase: str):
         rel_path = L.r.split(line)[1][2:]             # './...' -> '...'
         depth_path = f"../dataset/{rel_path}"
         out_path = depth_path.replace('.npy', '_rigidity.npy')
-        if os.path.exists(out_path):
+        pp_path = depth_path.replace('.npy', '_rigidity_pp.npy')
+        if os.path.exists(out_path) and (not SAVE_PER_POINT or os.path.exists(pp_path)):
             skipped += 1
             continue
         try:
@@ -120,6 +122,9 @@ def process_phase(phase: str):
             resid = kabsch_residuals_batch(aligned)        # (T, P)
             summary = frame_summary(resid)                 # (T, K)
             np.save(out_path, summary)
+            if SAVE_PER_POINT:
+                pp_path = depth_path.replace('.npy', '_rigidity_pp.npy')
+                np.save(pp_path, resid.astype(np.float32))   # (T, P=256)
             done += 1
         except Exception as e:
             print(f"  {i} fail: {e}")

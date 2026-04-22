@@ -39,6 +39,7 @@ class DepthVideoLoader(data.Dataset):
         img_size=112,
         use_tops=False,
         use_rigidity=False,
+        rigidity_per_point=False,           # True -> load {stem}_rigidity_pp.npy of (T, P=256)
         rigidity_norm_scale=8.0,
         hflip_prob=0.5,
         time_cutout_prob=0.5,
@@ -50,6 +51,7 @@ class DepthVideoLoader(data.Dataset):
         self.img_size = img_size
         self.use_tops = use_tops
         self.use_rigidity = use_rigidity
+        self.rigidity_per_point = rigidity_per_point
         self.rigidity_norm_scale = rigidity_norm_scale
         self.hflip_prob = hflip_prob
         self.time_cutout_prob = time_cutout_prob
@@ -112,14 +114,18 @@ class DepthVideoLoader(data.Dataset):
         depth_tensor = torch.from_numpy(arr).float()
 
         if self.use_rigidity:
-            rig_path = depth_path.replace('.npy', '_rigidity.npy')
+            suffix = '_rigidity_pp.npy' if self.rigidity_per_point else '_rigidity.npy'
+            rig_path = depth_path.replace('.npy', suffix)
             raw_rig = np.load(rig_path).astype(np.float32)
-            # Preprocessing already key-frame-sampled to T=framerate; fall back
-            # to re-indexing if the file turned out raw-T shaped.
             if raw_rig.shape[0] == depth.shape[0]:
                 rig = raw_rig
             else:
                 rig = raw_rig[idx]
+            # When per-point, sort each frame's residuals (descending) so that
+            # column k = the k-th-largest residual. Makes the vector order
+            # invariant to point-index mapping across samples.
+            if self.rigidity_per_point:
+                rig = np.sort(rig, axis=-1)[:, ::-1].copy()
             rig = rig * self.rigidity_norm_scale
             rig_tensor = torch.from_numpy(rig).float()
             return (depth_tensor, rig_tensor), label, line

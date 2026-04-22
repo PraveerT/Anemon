@@ -1,0 +1,55 @@
+# Sanity probe: can the per-frame rigidity stats alone classify gestures?
+# 32-frame, K=6 scalar features, tiny BiLSTM. Random = ~4.56% (1/25 classes).
+
+dataloader: depth_branch.dataloader.DepthVideoLoader
+
+phase: train
+num_epoch: 60
+work_dir: ./work_dir/depth_branch/rigidity_only/
+batch_size: 32
+test_batch_size: 16
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 10
+
+framesize: 32
+pts_size: 112
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.001
+  step:
+  - 40
+  - 50
+  weight_decay: 0.0001
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  img_size: 112
+  use_tops: false
+  use_rigidity: true
+  rigidity_norm_scale: 1.0
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  img_size: 112
+  use_tops: false
+  use_rigidity: true
+  rigidity_norm_scale: 1.0
+  hflip_prob: 0.0
+  time_cutout_prob: 0.0
+
+model: depth_branch.model.RigidityOnlyClassifier
+model_args:
+  num_classes: 25
+  rigidity_dim: 6
+  hidden: 64
+  lstm_layers: 2
+  dropout: 0.3

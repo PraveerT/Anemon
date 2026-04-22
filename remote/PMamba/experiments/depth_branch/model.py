@@ -179,6 +179,53 @@ class DepthCNNLSTM(nn.Module):
         return self.latest_aux_metrics
 
 
+class RigidityOnlyClassifier(nn.Module):
+    """Sanity probe: classify gesture using ONLY the per-frame rigidity stats.
+
+    Input: (B, T, K) per-frame rigidity feature vector.
+    Architecture: small BiLSTM over T, mean+max pool, MLP head -> 25 classes.
+    Ignores depth / tops entirely.
+
+    If this stays at random (~4%), rigidity residuals carry no gesture info.
+    If it climbs well above chance, the signal IS discriminative; any failure
+    to improve depth_v2 is an integration issue, not a signal issue.
+    """
+
+    def __init__(
+        self,
+        num_classes=25,
+        rigidity_dim=6,
+        hidden=64,
+        lstm_layers=2,
+        dropout=0.3,
+        **kwargs,
+    ):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=rigidity_dim, hidden_size=hidden,
+            num_layers=lstm_layers, batch_first=True, bidirectional=True,
+            dropout=dropout if lstm_layers > 1 else 0.0,
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(hidden * 4, num_classes)   # bi * (mean+max)
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+        self.latest_sample_weights = None
+
+    def forward(self, inputs):
+        # Accept the same tuple format as DepthCNNLSTM (ignore the depth part).
+        if isinstance(inputs, (tuple, list)) and len(inputs) == 2:
+            _, rig = inputs
+        else:
+            rig = inputs
+        rig = rig.float()                                      # (B, T, K)
+        seq, _ = self.lstm(rig)
+        t_mean = seq.mean(dim=1)
+        t_max = seq.max(dim=1).values
+        pooled = self.dropout(torch.cat([t_mean, t_max], dim=-1))
+        return self.classifier(pooled)
+
+
 def quat_mul(q1, q2):
     """Hamilton product of two batched unit quaternions. Layout [w, x, y, z]."""
     w1, x1, y1, z1 = q1.unbind(-1)
