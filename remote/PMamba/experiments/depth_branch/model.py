@@ -68,7 +68,10 @@ class DepthCNNLSTM(nn.Module):
         lstm_layers=2,
         bidirectional=True,
         dropout=0.3,
-        rigidity_dim=0,                     # K; 0 disables rigidity head
+        rigidity_dim=0,                     # K; 0 disables concat-to-LSTM path (v6)
+        rigidity_aux_dim=0,                 # K; 0 disables aux-predict head (v7)
+        rigidity_aux_hidden=64,
+        rigidity_aux_weight=0.1,
         **kwargs,
     ):
         super().__init__()
@@ -87,9 +90,22 @@ class DepthCNNLSTM(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(lstm_hidden * mult * 2, num_classes)
 
+        # Auxiliary rigidity-prediction head (v7). Predicts per-frame rigidity
+        # stats from per-frame CNN features. MSE against observed stats.
+        self.rigidity_aux_dim = rigidity_aux_dim
+        self.rigidity_aux_weight = rigidity_aux_weight
+        if rigidity_aux_dim > 0:
+            self.rigidity_aux_head = nn.Sequential(
+                nn.Linear(feat_dim, rigidity_aux_hidden),
+                nn.GELU(),
+                nn.Linear(rigidity_aux_hidden, rigidity_aux_dim),
+            )
+        self.latest_aux_loss = None
+        self.latest_aux_metrics = {}
+
     def forward(self, inputs):
         # Accept: tensor (legacy), or (tensor, rigidity_tensor) tuple when
-        # rigidity_dim > 0.
+        # rigidity_dim > 0 or rigidity_aux_dim > 0.
         rigidity = None
         if isinstance(inputs, (tuple, list)):
             if len(inputs) == 2:
@@ -104,6 +120,23 @@ class DepthCNNLSTM(nn.Module):
         feat = self.cnn(x)
         feat = feat.view(B, T, -1)                       # (B, T, feat_dim)
 
+        # Auxiliary rigidity prediction (v7): MSE of per-frame feat -> rigidity stats.
+        if self.training and self.rigidity_aux_dim > 0 and self.rigidity_aux_weight > 0:
+            assert rigidity is not None, "rigidity_aux_dim>0 but no rigidity tensor supplied"
+            rig_true = rigidity.float()                                          # (B, T, K)
+            rig_pred = self.rigidity_aux_head(feat)                              # (B, T, K)
+            aux = torch.nn.functional.mse_loss(rig_pred, rig_true)
+            self.latest_aux_loss = self.rigidity_aux_weight * aux
+            self.latest_aux_metrics = {
+                'qcc_raw': aux.detach(),
+                'qcc_forward': aux.detach(),
+                'qcc_backward': aux.detach(),
+                'qcc_valid_ratio': torch.ones(1, device=aux.device),
+            }
+        else:
+            self.latest_aux_loss = None
+            self.latest_aux_metrics = {}
+
         if self.rigidity_dim > 0:
             assert rigidity is not None, "rigidity_dim>0 but no rigidity tensor supplied"
             feat = torch.cat([feat, rigidity.float()], dim=-1)   # (B, T, feat_dim+K)
@@ -114,6 +147,12 @@ class DepthCNNLSTM(nn.Module):
         pooled = torch.cat([t_mean, t_max], dim=-1)
         pooled = self.dropout(pooled)
         return self.classifier(pooled)
+
+    def get_auxiliary_loss(self):
+        return self.latest_aux_loss
+
+    def get_auxiliary_metrics(self):
+        return self.latest_aux_metrics
 
 
 def quat_mul(q1, q2):
