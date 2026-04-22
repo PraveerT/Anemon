@@ -16,7 +16,7 @@ test samples.
 | v6  | rigidity stats concat to LSTM     | 58.92 | 92.95 | +3.11 | 1.00 | +0.00 | 15 | 34 |
 | v7  | aux rigidity-predict head (MSE, λ=0.1) | 64.73 | 92.12 | +2.28 | 0.90 | +0.21 | 11 | 38 |
 | v8  | binary articulation classifier    | — | — | — | — | — | — | — |
-| v9  | per-clip CE weighting             | — | — | — | — | — | — | — |
+| v9  | per-clip CE reweight (β=2)        | 61.62 | 92.95 | +3.11 | 0.90 | +0.41 | 15 | 34 |
 | v10 | rigidity-contrastive              | — | — | — | — | — | — | — |
 | v11 | rigidity-gated readout            | — | — | — | — | — | — | — |
 

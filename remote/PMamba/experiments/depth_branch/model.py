@@ -72,6 +72,7 @@ class DepthCNNLSTM(nn.Module):
         rigidity_aux_dim=0,                 # K; 0 disables aux-predict head (v7)
         rigidity_aux_hidden=64,
         rigidity_aux_weight=0.1,
+        rigidity_aux_loss='mse',           # 'mse' (v7) or 'bce_median' (v8)
         clip_reweight_beta=0.0,            # v9: CE weighting by clip rigidity std (0 disables)
         **kwargs,
     ):
@@ -95,11 +96,13 @@ class DepthCNNLSTM(nn.Module):
         # stats from per-frame CNN features. MSE against observed stats.
         self.rigidity_aux_dim = rigidity_aux_dim
         self.rigidity_aux_weight = rigidity_aux_weight
+        self.rigidity_aux_loss = rigidity_aux_loss
         if rigidity_aux_dim > 0:
+            out_dim = 1 if rigidity_aux_loss == 'bce_median' else rigidity_aux_dim
             self.rigidity_aux_head = nn.Sequential(
                 nn.Linear(feat_dim, rigidity_aux_hidden),
                 nn.GELU(),
-                nn.Linear(rigidity_aux_hidden, rigidity_aux_dim),
+                nn.Linear(rigidity_aux_hidden, out_dim),
             )
         self.latest_aux_loss = None
         self.latest_aux_metrics = {}
@@ -133,12 +136,20 @@ class DepthCNNLSTM(nn.Module):
         else:
             self.latest_sample_weights = None
 
-        # Auxiliary rigidity prediction (v7): MSE of per-frame feat -> rigidity stats.
+        # Auxiliary rigidity prediction (v7 mse / v8 bce_median) from per-frame feat.
         if self.training and self.rigidity_aux_dim > 0 and self.rigidity_aux_weight > 0:
             assert rigidity is not None, "rigidity_aux_dim>0 but no rigidity tensor supplied"
             rig_true = rigidity.float()                                          # (B, T, K)
-            rig_pred = self.rigidity_aux_head(feat)                              # (B, T, K)
-            aux = torch.nn.functional.mse_loss(rig_pred, rig_true)
+            if self.rigidity_aux_loss == 'bce_median':
+                # Target: is rigidity_mean_t above the per-clip median? (B, T) bool.
+                mean_per_frame = rig_true[:, :, 0]                               # (B, T)
+                median_per_clip = mean_per_frame.median(dim=1, keepdim=True).values
+                target = (mean_per_frame > median_per_clip).float()              # (B, T)
+                logits = self.rigidity_aux_head(feat).squeeze(-1)                # (B, T)
+                aux = torch.nn.functional.binary_cross_entropy_with_logits(logits, target)
+            else:
+                rig_pred = self.rigidity_aux_head(feat)                          # (B, T, K)
+                aux = torch.nn.functional.mse_loss(rig_pred, rig_true)
             self.latest_aux_loss = self.rigidity_aux_weight * aux
             self.latest_aux_metrics = {
                 'qcc_raw': aux.detach(),
