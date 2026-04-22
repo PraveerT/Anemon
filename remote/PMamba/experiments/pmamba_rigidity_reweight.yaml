@@ -1,0 +1,55 @@
+# PMamba with v9c-style rigidity CE reweighting (β=2.0).
+# Start from PMamba best (epoch110), finetune 40 epochs at PMamba's post-step
+# lr. Same config as the winning PMamba + rigidity reweighting on top.
+
+dataloader: nvidia_rigidity_loader.NvidiaRigidityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/pmamba_rigidity_reweight/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+strict_load: false
+weights: ./work_dir/pmamba_branch/epoch110_model.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.000012
+  step:
+  - 125
+  - 135
+  weight_decay: 0.0001
+  start_epoch: 100
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  rigidity_per_point: false
+  rigidity_sort: false
+  rigidity_norm_scale: 1.0
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  rigidity_per_point: false
+  rigidity_sort: false
+  rigidity_norm_scale: 1.0
+
+model: models.motion.PMambaRigidityReweight
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn: [32, 24, 48, 24]
+  topk: 8
+  clip_reweight_beta: 2.0
