@@ -17,7 +17,10 @@ test samples.
 | v7  | aux rigidity-predict head (MSE, λ=0.1) | 64.73 | 92.12 | +2.28 | 0.90 | +0.21 | 11 | 38 |
 | v8  | binary articulation aux (BCE median) | 57.26 | 92.12 | +2.28 | 0.90 | +0.00 | 11 | 38 |
 | v9  | per-clip CE reweight (β=2)        | 61.62 | 92.95 | +3.11 | 0.90 | +0.41 | 15 | 34 |
-| **v9-clean** | **batch-norm softplus weight (β=1)** | 62.86 | **93.57** | **+3.74** | 0.90 | +0.41 | **18** | **31** |
+| v9-clean β=0.5 | batch-norm softplus weight | — | 93.57 | +3.74 | 0.90 | +0.42 | — | — |
+| v9-clean β=1   | batch-norm softplus weight | 62.86 | 93.57 | +3.74 | 0.90 | +0.41 | 18 | 31 |
+| **v9-clean β=1.5** | **batch-norm softplus weight** | — | **94.19** | **+4.36** | 0.90 | **+0.83** | — | — |
+| v9-clean β=2   | batch-norm softplus weight | 56.85 | **94.40** | **+4.57** | 0.85 | +0.00 | **22** | **27** |
 | v10 | rigidity-contrastive              | — | — | — | — | — | — | — |
 | v11 | rigidity-gated readout            | — | — | — | — | — | — | — |
 
