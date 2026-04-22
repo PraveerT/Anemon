@@ -15,7 +15,7 @@ test samples.
 | v3–5 | QCC aux losses (3 variants)      | collapse | — | — | — | — | — | — |
 | v6  | rigidity stats concat to LSTM     | 58.92 | 92.95 | +3.11 | 1.00 | +0.00 | 15 | 34 |
 | v7  | aux rigidity-predict head (MSE, λ=0.1) | 64.73 | 92.12 | +2.28 | 0.90 | +0.21 | 11 | 38 |
-| v8  | binary articulation classifier    | — | — | — | — | — | — | — |
+| v8  | binary articulation aux (BCE median) | 57.26 | 92.12 | +2.28 | 0.90 | +0.00 | 11 | 38 |
 | v9  | per-clip CE reweight (β=2)        | 61.62 | 92.95 | +3.11 | 0.90 | +0.41 | 15 | 34 |
 | v10 | rigidity-contrastive              | — | — | — | — | — | — | — |
 | v11 | rigidity-gated readout            | — | — | — | — | — | — | — |
@@ -30,6 +30,43 @@ test samples.
 | rigidity_attn_v1 (quat + rigidity gate) | 67.01* | 91.91 | +0.21 |
 
 *killed pre-convergence; best-so-far.
+
+## Findings after v6 – v9
+
+Four rigidity-as-supervisory-signal variants on depth_v2 backbone:
+
+| run | oracle Δ vs v2 | fusion Δ vs v2 |
+|-----|----------------|-----------------|
+| v6  (concat to LSTM)        | −0.41 | −0.83 |
+| v7  (MSE aux)               | −1.24 | −0.62 |
+| v8  (BCE median aux)        | −1.24 | −0.83 |
+| v9  (per-clip CE reweight)  | −0.41 | −0.42 |
+
+**All four lose.** No variant reaches parity with v2 on oracle OR on fusion.
+
+**Interpretation:** Per-frame rigidity summary features, as computed from
+Hungarian-correspondence-aligned 256-point clouds with vanilla Kabsch, do NOT
+carry new class-discriminative signal beyond what the depth+tops CNN-LSTM
+backbone already extracts from pixels.
+
+Plausible reasons (untested):
+- Kabsch residuals are dominated by correspondence errors, not true
+  articulation. Without a weighted/robust fit, the "rigidity" scalar is
+  noisy-signal + noisy-noise.
+- The depth CNN already sees articulation directly in pixels (finger outlines,
+  contour curvature). A derived scalar is redundant.
+- Aggregating per-point residuals to 6 per-frame scalars throws away spatial
+  information.
+
+Next axes (untested):
+- **Weighted Kabsch** using `corr_full_weight` from the dataloader →
+  cleaner q_best, less contaminated residuals.
+- **Outlier-robust Kabsch** (2-pass: fit, mask high-residual outliers, refit)
+  → q_best reflects the rigid majority cleanly.
+- **Rasterised per-pixel rigidity map** as a 5th CNN channel (preserves
+  spatial info; harder to implement because of pixel↔point mapping).
+- **Abandon rigidity axis** and pursue other orthogonality sources (e.g.,
+  different backbone family, ensemble).
 
 ## Workflow
 
