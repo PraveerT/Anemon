@@ -1,0 +1,50 @@
+# pmamba_base + full DQCC aux (anchor + cycle). Load ep110 (89.83).
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/pmamba_dqcc/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+weights: ./work_dir/pmamba_branch/epoch110_model.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 30
+  - 50
+  weight_decay: 0.03
+  start_epoch: 80
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+
+model: models.motion.MotionDQCC
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn: [32, 24, 48, 24]
+  topk: 8
+  anchor_weight: 0.05
+  cycle_weight: 0.02

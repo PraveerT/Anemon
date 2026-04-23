@@ -1,0 +1,48 @@
+# PMamba+tops trained from scratch, matching pmamba_base recipe exactly.
+# pmamba_base = original PMamba (Motion class, xyz+t 4-ch, 89.83% @ ep110).
+# Same schedule: 300 ep, lr 0.00012 dropping at [100,160,180], pts 48->256
+# dynamic over ep 0-100. Only diff: MotionTops (7-ch xyz+tops+t input).
+
+dataloader: nvidia_dataloader.NvidiaLoader
+
+phase: train
+num_epoch: 300
+work_dir: ./work_dir/pmamba_tops_scratch/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 100
+  - 160
+  - 180
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+model: models.motion.MotionTops
+model_args:
+  num_classes: 25
+  pts_size: 96
+  knn: [32, 24, 48, 24]
+  topk: 8

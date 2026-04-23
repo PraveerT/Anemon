@@ -1,0 +1,51 @@
+# pmamba_base + dual-quaternion regression aux.
+# DQ standalone classifier: 20.12% (vs centroid 31.95%, quat 13.90%).
+# Full SE(3) supervision via q_r + q_d.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/pmamba_dq/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+weights: ./work_dir/pmamba_branch/epoch110_model.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 30
+  - 50
+  weight_decay: 0.03
+  start_epoch: 80
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+
+model: models.motion.MotionDQAux
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn: [32, 24, 48, 24]
+  topk: 8
+  dq_weight: 0.05

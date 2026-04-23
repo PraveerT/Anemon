@@ -1,0 +1,54 @@
+# pmamba_base + InfoNCE rigidity-contrastive aux loss.
+# Load best pmamba_base weights (ep110, 89.83%), reset schedule to start_epoch=80
+# so training runs ep81->300 with full pmamba_base LR drops at 100/160/180
+# (relative steps [20,80,100] since main.py MultiStepLR is step-count-based).
+# Aux: InfoNCE on fea1 features, per-frame median split of per-point residuals.
+
+dataloader: nvidia_dataloader.NvidiaLoader
+
+phase: train
+num_epoch: 300
+work_dir: ./work_dir/pmamba_contrastive/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+weights: ./work_dir/pmamba_branch/epoch110_model.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 20
+  - 80
+  - 100
+  weight_decay: 0.03
+  start_epoch: 80
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+model: models.motion.MotionRigidityContrastive
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn: [32, 24, 48, 24]
+  topk: 8
+  contrast_weight: 0.05
+  contrast_temp: 0.1
+  contrast_num_anchors: 16
