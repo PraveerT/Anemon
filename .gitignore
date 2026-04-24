@@ -16,3 +16,11 @@ htmlcov/
 
 remote-viz/
 viz-qcc/
+
+# model checkpoints and experiment artifacts
+*.pt
+*.pth
+*.npz
+*.npy
+work_dir/
+papers/
