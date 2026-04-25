@@ -1,0 +1,51 @@
+# PMamba+Cfbq fine-tune from pmamba_base ep110 weights, restart at epoch 100.
+# Loads epoch110_nostage1.pt (base backbone minus stage1) and trains with
+# 10-ch Cfbq input. start_epoch=100 aligns with base's first LR drop.
+# Same approach as pmamba_rigidres_fbq.yaml but with start_epoch=100 instead of 80.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 200
+work_dir: ./work_dir/pmamba_qcc_warmstart/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 1
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+weights: ./work_dir/pmamba_branch/epoch110_nostage1.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.000012
+  step:
+  - 60
+  - 80
+  weight_decay: 0.03
+  start_epoch: 100
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+
+model: models.motion.MotionRigidResFBQ
+model_args:
+  num_classes: 25
+  pts_size: 256
+  knn: [32, 24, 48, 24]
+  topk: 8
