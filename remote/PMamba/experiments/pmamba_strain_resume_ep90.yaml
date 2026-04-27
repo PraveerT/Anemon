@@ -1,0 +1,58 @@
+# PMamba + per-point Green-Lagrange strain (2-ch input feature).
+# Resume from pmamba_warmrestart_ep80/epoch90_model.pt; same warmrestart
+# schedule from ep90 onward: 10 ep at 0.00012, drop at ep100, then 0.000012.
+# strict_load=false because stage1 expands 4ch -> 6ch.
+
+dataloader: nvidia_dataloader.NvidiaQuaternionQCCParityLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/pmamba_strain_ep90/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+
+weights: ./work_dir/pmamba_warmrestart_ep80/epoch90_model.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 10
+  weight_decay: 0.03
+  start_epoch: 90
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+test_loader_args:
+  phase: test
+  framerate: 32
+  return_correspondence: true
+  assignment_mode: hungarian
+
+model: models.motion.MotionStrain
+model_args:
+  pts_size: 256
+  num_classes: 25
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8
+  strain_knn: 12

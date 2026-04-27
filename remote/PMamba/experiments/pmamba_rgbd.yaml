@@ -1,0 +1,50 @@
+# PMamba RGB-D from scratch.
+# Input: (T=32, N=512, 11) per clip — sk_wrapped depth + sk_color RGB on v2-trimmed clips.
+# Stage1 sees [uvdt, RGB] = 7 channels; downstream stays 4-ch coords (uvdt).
+
+dataloader: nvidia_dataloader.NvidiaRGBDLoader
+
+phase: train
+num_epoch: 120
+work_dir: ./work_dir/pmamba_rgbd/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 100
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+model: models.motion.MotionRGBD
+model_args:
+  pts_size: 256
+  num_classes: 25
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8

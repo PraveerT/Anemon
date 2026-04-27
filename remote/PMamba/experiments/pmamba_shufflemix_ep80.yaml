@@ -1,0 +1,54 @@
+# Same warm-restart from epoch80 but with ShuffleMix+ frame replacement
+# augmentation. Run for 120 epochs (start_epoch=80 -> 200).
+# 20 ep at 0.00012, 100 ep at 0.000012 (drop at internal step 20).
+
+dataloader: nvidia_dataloader.NvidiaLoader
+
+phase: train
+num_epoch: 200
+work_dir: ./work_dir/pmamba_shufflemix_ep80/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+
+weights: ./work_dir/pmamba_branch/epoch110_model.pt
+
+shufflemix_smprob: 0.3
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 20
+  weight_decay: 0.03
+  start_epoch: 80
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+model: models.motion.Motion
+model_args:
+  pts_size: 256
+  num_classes: 25
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8

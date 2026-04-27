@@ -1,0 +1,53 @@
+# PMamba + Hamilton-mix layer + class quaternion prototype head.
+# Resume from pmamba_warmrestart_ep80/epoch90_model.pt; expand head only.
+# strict_load=false because stage6 is replaced by quat_mix + quat_head + class_quats.
+
+dataloader: nvidia_dataloader.NvidiaLoader
+
+phase: train
+num_epoch: 140
+work_dir: ./work_dir/pmamba_quatproto_ep90/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 256
+dynamic_pts_size: false
+strict_load: false
+
+weights: ./work_dir/pmamba_warmrestart_ep80/epoch90_model.pt
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 10
+  weight_decay: 0.03
+  start_epoch: 90
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+model: models.motion.MotionQuatProto
+model_args:
+  pts_size: 256
+  num_classes: 25
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8
+  quat_scale: 16.0
