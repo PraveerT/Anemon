@@ -1,0 +1,49 @@
+# PMamba + dual-quaternion broadcast input feature, from scratch.
+# Recipe matches baseline: pts_size 96, base_lr 0.00012, step at ep100, 120 epochs.
+
+dataloader: nvidia_dataloader.NvidiaLoader
+
+phase: train
+num_epoch: 120
+work_dir: ./work_dir/pmamba_dq_e120/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: false
+strict_load: false
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step:
+  - 100
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args:
+  phase: train
+  framerate: 32
+
+test_loader_args:
+  phase: test
+  framerate: 32
+
+model: models.motion.MotionDQ
+model_args:
+  pts_size: 96
+  num_classes: 25
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8
