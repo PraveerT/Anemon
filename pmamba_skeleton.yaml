@@ -1,0 +1,38 @@
+# Net72: skeleton (MediaPipe hand landmarks).
+
+phase: train
+num_epoch: 120
+work_dir: ./work_dir/pmamba_skeleton/
+batch_size: 8
+test_batch_size: 1
+num_worker: 4
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 21
+dynamic_pts_size: false
+strict_load: false
+weights: null
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step: [100, 160, 180]
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args: {phase: train, framerate: 32}
+test_loader_args:  {phase: test,  framerate: 32}
+
+dataloader: nvidia_dataloader.NvidiaSkeletonLoader
+model: models.motion.Motion
+model_args:
+  pts_size: 21
+  num_classes: 25
+  knn: [8, 6, 8, 6]
+  topk: 4
+  multi_scale_num_scales: 3
