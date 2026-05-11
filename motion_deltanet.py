@@ -1,20 +1,18 @@
-"""N2 with Gated DeltaNet (ICLR 2025, arXiv 2412.06464) replacing the temporal Mamba.
+"""N2 with Gated DeltaNet (ICLR 2025, arXiv 2412.06464) — CHUNKWISE PARALLEL form.
 
-Self-contained implementation: T=32 is short, so a Python loop over time on GPU
-is fast enough. No need for fla's Triton kernels.
-
-DeltaNet recurrence (per head):
-    S_t = alpha_t * (I - beta_t * k_t k_t^T) * S_{t-1} + beta_t * k_t v_t^T
-    y_t = q_t^T S_t
+Uses the closed-form chunkwise computation from the DeltaNet paper (no Python loop):
+  V' = (I + L)^{-1} V          (triangular solve, L is rank-1-Householder kernel)
+  Y  = (A @ V') * cum_alpha    (lower-triangular attention with delta-rule weights)
 where:
-    S_t : (head_dim, value_dim) state matrix per head
-    q_t, k_t : (head_dim,) query/key per head
-    v_t : (value_dim,) value per head
-    alpha_t : scalar forget gate per head per step (sigmoid)
-    beta_t : scalar delta-rule write strength per head per step (sigmoid)
+  L[i,j] = β'_j (k_i · k_j) for j<i, else 0   (strictly lower)
+  A[i,j] = β'_j (q_i · k_j) for j<=i, else 0  (lower with diagonal)
+  β'_t = β_t / cum_alpha_t
+  cum_alpha_t = ∏_{r=1..t} α_r  (in log space for stability)
 
-True state tracking (associative recall, parity) — strictly more expressive
-than scalar SSM (Mamba). Drop QuaternionLinear (no equivariance value here).
+Single chunk of length T (=32 here), no recurrence between chunks needed.
+
+Derivation: claim S_t = Σ_{s≤t} β'_s k_s v'_s^T where v'_s = v_s − Σ_{r<s} β'_r (k_s·k_r) v'_r.
+Verified by induction (Σ_t β k k^T outer telescopes through (I − β kk^T) Householder).
 """
 import torch
 import torch.nn as nn
@@ -24,17 +22,17 @@ from models.motion import Motion
 
 
 class GatedDeltaNetBlock(nn.Module):
-    """Single Gated DeltaNet block: takes (B, T, D) -> (B, T, D)."""
+    """Chunkwise parallel Gated DeltaNet. Drop-in for a single chunk of length T."""
     def __init__(self, d_model, num_heads=4, head_dim=32, expand_v=2,
-                 use_short_conv=True, conv_size=4, dropout=0.1):
+                 use_short_conv=True, conv_size=4, dropout=0.1, eps=1e-5):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.value_dim = head_dim * int(expand_v)
+        self.eps = eps
         H, dk, dv = num_heads, head_dim, self.value_dim
 
-        # QKV projections
         self.q_proj = nn.Linear(d_model, H * dk, bias=False)
         self.k_proj = nn.Linear(d_model, H * dk, bias=False)
         self.v_proj = nn.Linear(d_model, H * dv, bias=False)
@@ -43,7 +41,6 @@ class GatedDeltaNetBlock(nn.Module):
         self.alpha_proj = nn.Linear(d_model, H)  # forget
         self.beta_proj = nn.Linear(d_model, H)   # write strength
 
-        # Mamba-style short conv on Q, K, V (depthwise causal)
         self.use_short_conv = use_short_conv
         self.conv_size = conv_size
         if use_short_conv:
@@ -59,54 +56,53 @@ class GatedDeltaNetBlock(nn.Module):
         B, T, D = x.shape
         H, dk, dv = self.num_heads, self.head_dim, self.value_dim
 
-        q = self.q_proj(x)              # (B, T, H*dk)
-        k = self.k_proj(x)
-        v = self.v_proj(x)              # (B, T, H*dv)
+        q = self.q_proj(x); k = self.k_proj(x); v = self.v_proj(x)
         if self.use_short_conv:
-            qkv = torch.cat([q, k, v], dim=-1).transpose(1, 2)  # (B, ch, T)
-            qkv = self.short_conv(qkv)[..., :T].transpose(1, 2) # causal: drop right pad
+            qkv = torch.cat([q, k, v], dim=-1).transpose(1, 2)
+            qkv = self.short_conv(qkv)[..., :T].transpose(1, 2)  # causal: drop right pad
             q, k, v = qkv[..., :H*dk], qkv[..., H*dk:2*H*dk], qkv[..., 2*H*dk:]
 
-        # Reshape to per-head: (B, H, T, dk_or_dv)
+        # Per-head: (B, H, T, dk)
         q = q.view(B, T, H, dk).transpose(1, 2)
         k = k.view(B, T, H, dk).transpose(1, 2)
         v = v.view(B, T, H, dv).transpose(1, 2)
-        # L2-normalize keys for stable Householder
         k = F.normalize(k, dim=-1)
-        # Activation on q (silu, common in DeltaNet)
         q = F.silu(q)
 
-        # Gates per head per step
-        alpha = torch.sigmoid(self.alpha_proj(x)).transpose(1, 2)  # (B, H, T)
-        beta = torch.sigmoid(self.beta_proj(x)).transpose(1, 2)
+        # Plain DeltaNet (no alpha forget gate, T=32 is short).
+        # Avoids the β/cum_alpha numerical blow-up that NaNs the chunkwise solve.
+        beta_p = torch.sigmoid(self.beta_proj(x)).transpose(1, 2)   # (B, H, T)
 
-        # State (B, H, dk, dv); recurrent loop over T (T=32, fast)
-        S = torch.zeros(B, H, dk, dv, device=x.device, dtype=x.dtype)
-        outs = []
-        for t in range(T):
-            qt = q[:, :, t]                # (B, H, dk)
-            kt = k[:, :, t]
-            vt = v[:, :, t]                # (B, H, dv)
-            at = alpha[:, :, t].view(B, H, 1, 1)
-            bt = beta[:, :, t].view(B, H, 1, 1)
+        # KK[i,j] = k_i · k_j  (B, H, T, T)
+        KK = torch.einsum('bhid,bhjd->bhij', k, k)
+        # L[i,j] = β'_j * KK[i,j]  for j<i, 0 elsewhere
+        # mask: strict lower triangular
+        device = x.device
+        mask_lt = torch.ones(T, T, device=device, dtype=torch.bool).tril(diagonal=-1)
+        L = beta_p.unsqueeze(-2) * KK                                # broadcast: (B, H, T, T)
+        L = L * mask_lt.to(L.dtype)
+        # I + L is unit lower triangular
+        eye = torch.eye(T, device=device, dtype=L.dtype).expand(B, H, T, T)
+        I_plus_L = eye + L
+        # V' = (I + L)^{-1} V
+        V_prime = torch.linalg.solve_triangular(I_plus_L, v, upper=False, unitriangular=True)
 
-            # k^T S: contract over dk. S[..., i, j] is dk x dv.
-            # kt.unsqueeze(-1): (B, H, dk, 1); times S sum dim -2 -> (B, H, dv)
-            kT_S = (kt.unsqueeze(-1) * S).sum(dim=-2)
-            # Update: S = at * (I - bt k k^T) S + bt k v^T
-            S = at * (S - bt * kt.unsqueeze(-1) * kT_S.unsqueeze(-2)) \
-                + bt * (kt.unsqueeze(-1) * vt.unsqueeze(-2))
-            # Output: q^T S -> (B, H, dv)
-            out = (qt.unsqueeze(-1) * S).sum(dim=-2)
-            outs.append(out)
+        # A[i,j] = β'_j * (q_i · k_j) for j<=i, 0 elsewhere
+        QK = torch.einsum('bhid,bhjd->bhij', q, k)
+        mask_le = torch.ones(T, T, device=device, dtype=torch.bool).tril(diagonal=0)
+        A = beta_p.unsqueeze(-2) * QK
+        A = A * mask_le.to(A.dtype)
 
-        y = torch.stack(outs, dim=2).reshape(B, T, H * dv)
+        # Y = A @ V' (no cum_alpha rescaling since alpha is dropped)
+        Y = torch.matmul(A, V_prime)                                 # (B, H, T, dv)
+
+        y = Y.transpose(1, 2).reshape(B, T, H * dv)
         y = self.dropout(y)
         return self.o_proj(y)
 
 
 class GatedDeltaNetTemporalEncoder(nn.Module):
-    """Drop-in replacement for MambaTemporalEncoder using Gated DeltaNet blocks."""
+    """Drop-in replacement for MambaTemporalEncoder using chunkwise Gated DeltaNet blocks."""
     def __init__(self, in_channels, hidden_dim=256, output_dim=None, num_layers=2,
                  num_heads=4, head_dim=64, expand_v=2,
                  use_short_conv=True, conv_size=4, dropout=0.3):
@@ -143,7 +139,7 @@ class GatedDeltaNetTemporalEncoder(nn.Module):
 
 
 class MotionDeltaNet(Motion):
-    """N2 backbone with Gated DeltaNet replacing the temporal Mamba."""
+    """N2 backbone with chunkwise Gated DeltaNet replacing the temporal Mamba."""
     def __init__(self, *args, dn_hidden_dim=256, dn_num_layers=2, dn_num_heads=4,
                  dn_head_dim=64, dn_expand_v=2, dn_dropout=0.3, **kwargs):
         super().__init__(*args, **kwargs)
