@@ -1,0 +1,45 @@
+# DeltaNet v2: bidirectional + wider hidden + stable Gated DeltaNet (α gate)
+
+phase: train
+num_epoch: 120
+work_dir: ./work_dir/pmamba_dtw_deltanet_v2/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+strict_load: false
+weights: null
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step: [100, 160, 180]
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args: {phase: train, framerate: 32}
+test_loader_args:  {phase: test,  framerate: 32}
+
+dataloader: nvidia_dataloader.NvidiaDTWLoader
+model: models.motion_deltanet_v2.MotionDeltaNetV2
+model_args:
+  pts_size: 96
+  num_classes: 25
+  knn: [32, 24, 48, 24]
+  topk: 8
+  multi_scale_num_scales: 5
+  dn_hidden_dim: 256
+  dn_num_layers: 2
+  dn_num_heads: 4
+  dn_head_dim: 64
+  dn_expand_v: 2
+  dn_dropout: 0.3
+  dn_bidirectional: true
