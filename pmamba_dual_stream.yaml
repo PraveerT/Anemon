@@ -1,0 +1,47 @@
+# Dual-stream end-to-end: depth (N2 backbone) + lattice arrow field (SeQuMamba side stream)
+# Mid-level fusion: concat both branch features post-trunk, before joint classifier.
+# Both branches train from scratch.
+
+phase: train
+num_epoch: 120
+work_dir: ./work_dir/pmamba_dual_stream_v6/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+strict_load: false
+weights: null
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step: [100, 160, 180]
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args: {phase: train, framerate: 32}
+test_loader_args:  {phase: test,  framerate: 32}
+
+dataloader: nvidia_dataloader.NvidiaDTWLatticeK8Top256Loader
+model: models.motion_dual_stream.MotionDualStream
+model_args:
+  pts_size: 96
+  num_classes: 25
+  knn: [32, 24, 48, 24]
+  topk: 8
+  multi_scale_num_scales: 5
+  lattice_n: 256
+  side_hidden: 768
+  side_layers: 6
+  side_classifier_hidden: 768
+  side_dropout: 0.2
+  aux_weight: 1.0
+  lattice_init_weights: ./work_dir/lattice_sequmamba_k8h768l6_top256/best_model.pt
