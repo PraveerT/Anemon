@@ -96,3 +96,36 @@ All under `/notebooks/PMamba/experiments/`:
 2. Try MultiQueryRead RD as a cheaper variant of AttRD (K queries per token, no full T×T attention).
 3. Decorrelation analysis: pairwise error-overlap matrix across all 6 models to formally justify the BRD+AttRD selection.
 4. If AttRD(N2) plus existing ensemble beats 92.32 → 3-way novel-arch fusion is the publication.
+
+## Follow-up attempts (2026-05-13, both failed to lift 92.32)
+
+After the 92.32 ceiling was established, two autonomous attempts to extend the AttRD direction:
+
+### AttRD-v2 (architectural enhancement)
+- **State-conditioned read keys** (read_k_τ from B_acc[τ] instead of x_τ)
+- **Output gate** σ(W·x_t) ⊙ Y_read (Mamba/SSM-style selective output)
+- **d_read** 32 → 64
+- Result: train-best ep110 solo 87.76 (vs AttRD 89.00, **-1.24pp**)
+- DSN + BRD + AttRD-v2 = 92.12 (vs original trio 92.32, **-0.20pp**)
+- DSN + AttRD-v2 + AttRD = 92.12 (no additive gain)
+
+### AttRD(N2) (input-stream diversity)
+- Same AttRD architecture, trained on N2 (DTW-warped input)
+- Result: train-best ep112 solo 87.34 (vs AttRD(N1) 89.00, **-1.66pp**)
+- DSN + BRD + AttRD(N2) = 91.91 (-0.41pp from trio)
+- DSN + AttRD(N1) + AttRD(N2) = 91.91 (no additive gain)
+- AttRD(N2) ep120 solo 86.72
+
+### Pattern
+All three AttRD variants tested converge on the same finding: **the original AttRD(N1) is at the architectural and input optimum for this fusion role.** Further capacity (state-cond, gate, larger d_read), different inputs (N2), and pair-stacking (AttRD(N1)+AttRD(N2)) all fail.
+
+The 92.32 trio (DSN + BRD + AttRD) appears to be the empirical honest-fusion ceiling for this model family on NVGesture. Beating it requires either:
+- A fundamentally new fusion partner (not a DeltaNet variant)
+- More training data
+- Test-set epoch leakage (which can push to 92.53)
+
+Updated open work:
+1. ~~AttRD(N2)~~ tested, no gain
+2. ~~AttRD architecture tweaks~~ tested, no gain
+3. Decorrelation analysis remains valuable as paper artifact
+4. **New direction**: try non-DeltaNet fusion partner (e.g. a small transformer head, or a graph network) — only architectures not yet in the ensemble pool
