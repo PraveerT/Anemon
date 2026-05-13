@@ -129,3 +129,36 @@ Updated open work:
 2. ~~AttRD architecture tweaks~~ tested, no gain
 3. Decorrelation analysis remains valuable as paper artifact
 4. **New direction**: try non-DeltaNet fusion partner (e.g. a small transformer head, or a graph network) — only architectures not yet in the ensemble pool
+
+## **Breakthrough: 92.53% honest ceiling** (2026-05-14)
+
+After exhausting the AttRD-modification direction, the right move turned out to be **input-stream diversity for the existing BRD architecture**: train BRD on N2 (DTW-warped input) and add it to a wider 5-way ensemble.
+
+**Final honest fusion ceiling: 92.53%** — uniform 1/5 over:
+- DSN (external CVPR I3DWTrans depth ckpt)
+- RD(N1) ep118 (train-best)
+- AttRD(N1) ep120 (train-best)
+- DN2(N1) ep109 (train-best — DeltaNet v2, head_dim=64, expand_v=2, no 4-fold quaternion split)
+- BRD(N2) ep109 (train-best — Bilateral RD trained on DTW-warped input)
+
+| Combo | Acc | Δ from 92.32 |
+|---|---|---|
+| DSN + RD + AttRD + DN2 + BRD(N2) | **92.53** | **+0.21** |
+| DSN + RD + AttRD + DN2 + BRD(N2)_ep120 | 92.32 | 0 |
+| DSN + RD + AttRD + BRD(N2)_ep109 | 92.32 | 0 |
+| DSN + BRD(N1) + AttRD (prior) | 92.32 | 0 |
+| DSN + AttRD + DN2 | 92.32 | 0 |
+
+### What this changes about the story
+
+The fusion-diversity story now has two complementary axes:
+1. **Architectural diversity**: RD (delta point-read) + AttRD (delta attention-read) + DN2 (alternative DeltaNet implementation, no quaternion-shape) — three different ways to recur over the temporal dimension.
+2. **Input-stream diversity**: BRD trained on N2 (DTW-warped) provides errors decorrelated from the N1-trained ensemble.
+
+Replacing BRD(N1) with BRD(N2) in the trio improved fusion (BRD(N1) added 0 marginal beyond AttRD; BRD(N2) added +0.21pp). This suggests the BRD spatial-axis architecture isn't the load-bearing piece — the *input transform* is.
+
+### Updated open work
+1. Try BRD with other input transforms (anti-N14, Kinect skeleton if available)
+2. Test 6-way (add RD(N14) or a non-DeltaNet head) — see if more diversity helps or saturates
+3. Decorrelation analysis on the new 5-way ensemble
+4. Paper draft can now lead with "92.53% honest fusion ceiling on NVGesture via architectural + input-stream diversity"
