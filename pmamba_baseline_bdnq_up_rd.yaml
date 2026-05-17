@@ -1,0 +1,56 @@
+# Ablation: same arch as QHDeltaNet but with Hamilton products replaced by
+# elementwise products. Tests whether the quaternion algebra is the active
+# ingredient, or whether the DeltaNet skeleton suffices.
+
+dataloader: nvidia_dataloader.NvidiaLoader
+phase: train
+num_epoch: 120
+work_dir: ./work_dir/pmamba_baseline_bdnq_up_rd/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+strict_load: false
+weights: null
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step: [100, 160, 180]
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args: {phase: train, framerate: 32}
+test_loader_args:  {phase: test,  framerate: 32}
+
+model: models.motion_bdnq_upstream.MotionBDNQUpstreamRD
+model_args:
+  pts_size: 96
+  num_classes: 25
+  knn: [32, 24, 48, 24]
+  topk: 8
+  multi_scale_num_scales: 5
+  rd_hidden_dim: 128
+  rd_num_layers: 2
+  rd_num_heads: 4
+  rd_n_q: 4
+  rd_n_v: 8
+  rd_dropout: 0.3
+  rd_bidirectional: true
+  bdnq_pre_hidden_dim: 32
+  bdnq_pre_num_layers: 1
+  bdnq_pre_num_heads: 4
+  bdnq_pre_n_q: 2
+  bdnq_pre_n_v: 2
+  bdnq_pre_buffer_size: 1
+  bdnq_pre_dropout: 0.3
+  bdnq_pre_bidirectional: true
+  bdnq_pre_raw_channels: 8
