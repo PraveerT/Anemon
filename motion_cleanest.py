@@ -138,6 +138,72 @@ class CleanestLinXLEncoder(nn.Module):
         return out
 
 
+def quat_mul(p, q):
+    """Hamilton product. p, q: (..., 4) with last dim = (w, x, y, z)."""
+    pw, px, py, pz = p.unbind(-1)
+    qw, qx, qy, qz = q.unbind(-1)
+    w = pw * qw - px * qx - py * qy - pz * qz
+    x = pw * qx + px * qw + py * qz - pz * qy
+    y = pw * qy - px * qz + py * qw + pz * qx
+    z = pw * qz + px * qy - py * qx + pz * qw
+    return torch.stack([w, x, y, z], dim=-1)
+
+
+def quat_inv(q):
+    """Inverse of a unit quaternion = conjugate."""
+    return torch.cat([q[..., :1], -q[..., 1:]], dim=-1)
+
+
+class QuaternionPoseTrajectoryPool(nn.Module):
+    """Replace Stage-4 max-pool with a quaternion-aware trajectory aggregator.
+
+    Per-frame, predicts a unit quaternion q_t in S^3 from the spatially-pooled
+    1024-channel features. Aggregates the trajectory {q_1, ..., q_T} via
+    quaternion-aware statistics:
+      - mean rotation (Frobenius-mean then re-normalize)
+      - geodesic spread (S^3 variance proxy)
+      - start-to-end relative rotation: q_T * q_1^{-1}
+      - cumulative angular velocity proxy
+
+    These quaternion-derived features are concatenated with standard mean/max/
+    std temporal pools and projected to out_ch. On the MAIN forward path
+    (no residual around it), so the network cannot bypass this aggregation.
+    """
+    def __init__(self, in_ch=1024, out_ch=1024):
+        super().__init__()
+        self.q_head = nn.Linear(in_ch, 4)
+        # 3 * in_ch (mean+max+std) + 4 (q_mean) + 1 (q_var) + 4 (q_rel) + 3 (q_ang)
+        self.compress = nn.Linear(3 * in_ch + 12, out_ch)
+
+    def forward(self, x):                               # x: (B, C, T, N)
+        # Spatial max over N for per-frame pooled features
+        x_t = x.amax(dim=3)                              # (B, C, T)
+        x_tc = x_t.transpose(1, 2)                        # (B, T, C)
+
+        # Standard temporal stats
+        s_mean = x_t.mean(dim=2)                          # (B, C)
+        s_max  = x_t.amax(dim=2)                          # (B, C)
+        s_std  = x_t.std(dim=2)                            # (B, C)
+
+        # Predict per-frame quaternion (unit-norm)
+        q = self.q_head(x_tc)                              # (B, T, 4)
+        q = q / (q.norm(dim=-1, keepdim=True) + 1e-8)
+
+        # Quaternion stats
+        q_mean = q.mean(dim=1)                             # (B, 4)
+        q_mean = q_mean / (q_mean.norm(dim=-1, keepdim=True) + 1e-8)
+        q_var  = (q - q_mean.unsqueeze(1)).pow(2).sum(-1).mean(-1, keepdim=True)  # (B,1)
+        q_rel  = quat_mul(q[:, -1], quat_inv(q[:, 0]))     # (B, 4)
+        # cumulative angular velocity: sum of imaginary parts of q_t - q_{t-1}
+        q_diff = q[:, 1:] - q[:, :-1]                       # (B, T-1, 4)
+        q_ang  = q_diff[..., 1:].sum(dim=1)                # (B, 3)
+
+        feats = torch.cat([s_mean, s_max, s_std,
+                           q_mean, q_var, q_rel, q_ang], dim=-1)  # (B, 3C + 12)
+        out = self.compress(feats)                          # (B, out_ch)
+        return out.unsqueeze(-1).unsqueeze(-1)              # (B, out_ch, 1, 1)
+
+
 class MotionCleanestLinXL(Motion):
     """PMamba with wider per-frame MLP encoder (no temporal mixing), param-
     matched to RD. Tests the parameter-count hypothesis: does increasing the
@@ -152,3 +218,10 @@ class MotionCleanestLinXL(Motion):
             output_dim=256, num_layers=lxl_num_layers, dropout=lxl_dropout,
             bidirectional=lxl_bidirectional, residual_scale=lxl_residual_scale,
         )
+
+
+class MotionCleanestLinXLQ(MotionCleanestLinXL):
+    """CN-XL encoder + Quaternion Pose-Trajectory Pool replacing AdaptiveMaxPool2d."""
+    def __init__(self, *args, qpool_in_ch=1024, qpool_out_ch=1024, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pool5 = QuaternionPoseTrajectoryPool(qpool_in_ch, qpool_out_ch)

@@ -1,0 +1,48 @@
+# CN-XXL + Quaternion Multi-Scale Conv (B2).
+# Resume from CN-XXL ep100 (88.59 train-best epoch from CN-XXL log) with
+# quaternion convs replacing scale filters in MultiScaleFeatureProcessor.
+# 30 ep fine-tune, 10 ep at full LR then 20 ep at 1/10 LR.
+
+dataloader: nvidia_dataloader.NvidiaLoader
+phase: train
+num_epoch: 30
+work_dir: ./work_dir/pmamba_baseline_cn_xxl_qms/
+batch_size: 8
+test_batch_size: 1
+num_worker: 8
+device: 0
+log_interval: 50
+eval_interval: 1
+save_interval: 5
+
+framesize: 32
+pts_size: 96
+dynamic_pts_size: true
+strict_load: false
+weights: ./work_dir/pmamba_baseline_cn_xxl/epoch100_model.pt
+# resume: false (default) so optimizer state is fresh
+
+optimizer_args:
+  optimizer: Adam
+  base_lr: 0.00012
+  step: [10]
+  weight_decay: 0.03
+  start_epoch: 0
+  nesterov: false
+
+train_loader_args: {phase: train, framerate: 32}
+test_loader_args:  {phase: test,  framerate: 32}
+
+model: models.motion_cleanest_qms.MotionCleanestLinXLQMS
+model_args:
+  pts_size: 96
+  num_classes: 25
+  knn: [32, 24, 48, 24]
+  topk: 8
+  multi_scale_num_scales: 5
+  lxl_hidden_dim: 256
+  lxl_mlp_dim: 512
+  lxl_num_layers: 4
+  lxl_dropout: 0.3
+  lxl_bidirectional: true
+  lxl_residual_scale: 0.7
