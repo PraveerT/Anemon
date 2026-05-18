@@ -13,7 +13,7 @@ Always start a session first. This keeps a kernel alive so every command is fast
 jlab session start
 
 # Change session working directory (persists across exec calls)
-jlab session cd /notebooks/PMamba
+jlab session cd /notebooks/Anemon
 
 # Check session / Stop when done
 jlab session status
@@ -26,10 +26,10 @@ jlab session stop
 
 ```bash
 # GOOD — one tool call for 3 commands:
-jlab exec "ls /notebooks/PMamba" "cat README.md" "wc -l *.py"
+jlab exec "ls /notebooks/Anemon" "cat README.md" "wc -l *.py"
 
 # BAD — 3 separate tool calls:
-jlab exec "ls /notebooks/PMamba"
+jlab exec "ls /notebooks/Anemon"
 jlab exec "cat README.md"
 jlab exec "wc -l *.py"
 ```
@@ -44,24 +44,24 @@ jlab run "import torch" "print(torch.cuda.is_available())" "print(torch.__versio
 ```bash
 # Shell commands (batch multiple for efficiency)
 jlab exec "cmd1" "cmd2" "cmd3"
-jlab exec --cwd /notebooks/PMamba "python train.py"
+jlab exec --cwd /notebooks/Anemon "python train.py"
 
 # Browse remote files (REST API, no kernel needed)
 jlab ls [path]
 jlab cat path/to/file
 
 # Find files
-jlab find "*.py" --path /notebooks/PMamba
+jlab find "*.py" --path /notebooks/Anemon
 
 # Transfer files
-jlab download PMamba/model.py
-jlab upload model.py PMamba/model.py
+jlab download Anemon/model.py
+jlab upload model.py Anemon/model.py
 
 # Run Python code (batch multiple)
 jlab run "code1" "code2" "code3"
 
 # Run a notebook
-jlab nb run PMamba/experiment.ipynb
+jlab nb run Anemon/experiment.ipynb
 
 # Server info
 jlab status
@@ -71,7 +71,7 @@ jlab kernels
 ## Remote Machine
 
 - GPU server on Paperspace Gradient
-- Projects in `/notebooks/`: PMamba, REQNN, paper, research, viz-qcc
+- Projects in `/notebooks/`: Anemon, REQNN, paper, research, viz-qcc
 - Python 3.11, PyTorch 2.1.1+cu121, NumPy, CUDA
 - Config: `~/.jlab/config.json`, Session: `~/.jlab/session.json`
 
