@@ -1,13 +1,10 @@
-"""Self-supervised pretraining of the FrameEncoder + FrameDecoder.
+"""Self-supervised pretraining of FrameEncoder + FrameDecoder (cross-attn).
 
-Loads the NVGesture training data via the standard NvidiaLoader.
-Trains the AE alone on:
-  L = chamfer_weight * chamfer(canonical, input) + temporal_weight * smoothness
-Saves encoder + decoder state_dict to a checkpoint that the classifier
-training will load as a warm start.
+Trains AE alone on NVGesture train split:
+    L = chamfer(canonical, input) + temporal_weight * smoothness
 
 Run from experiments/ directory:
-    python3 -u pretrain_ae.py --epochs 30 --out work_dir/ae_pretrain.pt
+    python3 -u pretrain_ae.py --epochs 40 --K 512 --feature-dim 128
 """
 import argparse
 import os
@@ -27,13 +24,14 @@ from nvidia_dataloader import NvidiaLoader
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--epochs', type=int, default=30)
+    p.add_argument('--epochs', type=int, default=40)
     p.add_argument('--batch-size', type=int, default=8)
     p.add_argument('--num-worker', type=int, default=8)
     p.add_argument('--lr', type=float, default=3e-4)
-    p.add_argument('--latent-dim', type=int, default=128)
-    p.add_argument('--K', type=int, default=128)
-    p.add_argument('--decoder-hidden', type=int, default=256)
+    p.add_argument('--feature-dim', type=int, default=128)
+    p.add_argument('--K', type=int, default=512)
+    p.add_argument('--query-dim', type=int, default=64)
+    p.add_argument('--heads', type=int, default=4)
     p.add_argument('--chamfer-weight', type=float, default=1.0)
     p.add_argument('--temporal-weight', type=float, default=0.5)
     p.add_argument('--out', type=str, default='work_dir/ae_pretrain/ae_pretrain.pt')
@@ -42,16 +40,16 @@ def parse_args():
 
 
 class AE(nn.Module):
-    def __init__(self, latent_dim, K, decoder_hidden):
+    def __init__(self, feature_dim, K, query_dim, heads):
         super().__init__()
-        self.encoder = FrameEncoder(latent_dim=latent_dim)
-        self.decoder = FrameDecoder(latent_dim=latent_dim, K=K, hidden=decoder_hidden)
+        self.encoder = FrameEncoder(feature_dim=feature_dim)
+        self.decoder = FrameDecoder(
+            feature_dim=feature_dim, K=K, query_dim=query_dim, heads=heads,
+        )
         self.K = K
 
     def forward(self, xyz):
-        latent = self.encoder(xyz)
-        canonical = self.decoder(latent)
-        return canonical
+        return self.decoder(self.encoder(xyz))
 
 
 def main():
@@ -67,9 +65,10 @@ def main():
     )
     print(f'[ae-pretrain] dataset {len(dataset)} samples, {len(loader)} batches/epoch')
 
-    model = AE(args.latent_dim, args.K, args.decoder_hidden).to(device)
-    print(f'[ae-pretrain] params encoder={sum(p.numel() for p in model.encoder.parameters())}'
-          f' decoder={sum(p.numel() for p in model.decoder.parameters())}')
+    model = AE(args.feature_dim, args.K, args.query_dim, args.heads).to(device)
+    enc_p = sum(p.numel() for p in model.encoder.parameters())
+    dec_p = sum(p.numel() for p in model.decoder.parameters())
+    print(f'[ae-pretrain] params encoder={enc_p} decoder={dec_p} total={enc_p + dec_p}')
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
@@ -86,11 +85,11 @@ def main():
             inputs = data[0]
             if isinstance(inputs, (list, tuple)):
                 inputs = inputs[0]
-            inputs = inputs.to(device, non_blocking=True)        # (B, T, N, 4)
-            xyz = inputs[..., :3]                                # (B, T, N, 3)
+            inputs = inputs.to(device, non_blocking=True)
+            xyz = inputs[..., :3]
             B, T, N, _ = xyz.shape
 
-            canonical = model(xyz)                                # (B, T, K, 3)
+            canonical = model(xyz)
             BT = B * T
             chamfer = _chamfer_distance(
                 canonical.reshape(BT, args.K, 3),
@@ -140,7 +139,7 @@ def main():
             }, args.out)
             print(f'[ae-pretrain] saved best {args.out} score={score:.5f}', flush=True)
 
-    print(f'[ae-pretrain] done. best={best:.5f} at ep{[h["epoch"] for h in history if h["chamfer"] + h["temporal"] == best][0]}')
+    print(f'[ae-pretrain] done. best={best:.5f}')
 
 
 if __name__ == '__main__':

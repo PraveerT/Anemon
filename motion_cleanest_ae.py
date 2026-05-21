@@ -1,27 +1,27 @@
 """CN-XXL + quat-head (91.08 winner) + AE for correspondence emergence.
 
-Pipeline:
-  random_input (B, T, N, 4)
-    -> per-frame PointNet encoder -> latent (B, T, latent_dim)
-    -> per-frame MLP decoder -> canonical (B, T, K, 3)
-    -> append normalised time channel -> (B, T, K, 4)
-    -> CN-XXL spatial pipeline (no random permutation; canonical order preserved)
-    -> main logits
+AE design (no information bottleneck):
+  encoder: per-point MLP (no max-pool), preserves per-point information
+    input  (B, T, N, 3)  ->  features (B, T, N, F)
+  decoder: K learnable query embeddings + 1-layer cross-attention to
+           per-point features, then MLP -> xyz. The k-th query is shared
+           across all frames, so it asks for "the same" content each
+           frame -> output index k carries correspondence by construction
+           (anatomical region selected by the learned k-th query).
 
-In parallel: per-frame inertia quaternion from the ORIGINAL input xyz
-(same signal as the 91.08 quat-head run) -> quat_head MLP -> aux logits
--> ensembled into output via learnable quat_head_scale.
+Training pipeline:
+  1. Pretrain encoder + decoder alone (chamfer + temporal smoothness).
+  2. Bake offline canonical dataset (apply frozen AE to all NVGesture
+     samples; save to disk).
+  3. Train CN-XXL+quat-head on the baked dataset (correspondence is now
+     ground truth in the data; classifier is decoupled from the AE).
 
-AE training losses (summed into self.aux_loss for the trainer):
-  - chamfer(canonical_t, input_t): reconstruction
-  - temporal smoothness ||canonical[t+1] - canonical[t]||^2: forces output
-    index k to track the same anatomical point across frames (correspondence)
-
-Built on top of MotionCleanestLinXLQuatHead so we keep the +1.45 pp lift
-from the quat-head and ONLY add the new AE mechanism.
+This file additionally provides MotionCleanestLinXLAE, an end-to-end
+wrapper kept for completeness (AE in-the-loop with the classifier).
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.motion_cleanest_quat_head import MotionCleanestLinXLQuatHead
 from models.motion_cleanest_quat import _inertia_quat
@@ -36,58 +36,86 @@ def _chamfer_distance(p1, p2):
 
 
 class FrameEncoder(nn.Module):
-    """(B, T, N, 3) -> (B, T, latent_dim) via per-frame PointNet."""
-    def __init__(self, latent_dim=128):
+    """Per-point encoder, no max-pool. (B, T, N, 3) -> (B, T, N, F)."""
+    def __init__(self, feature_dim=128):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Conv1d(3, 64, 1, bias=False),
             nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
+            nn.GELU(),
             nn.Conv1d(64, 128, 1, bias=False),
             nn.BatchNorm1d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(128, latent_dim, 1, bias=False),
-            nn.BatchNorm1d(latent_dim),
-            nn.ReLU(inplace=True),
+            nn.GELU(),
+            nn.Conv1d(128, feature_dim, 1, bias=False),
+            nn.BatchNorm1d(feature_dim),
+            nn.GELU(),
         )
 
     def forward(self, xyz):
         B, T, N, _ = xyz.shape
-        x = xyz.reshape(B * T, N, 3).transpose(1, 2)
-        f = self.mlp(x)
-        z = f.max(dim=-1)[0]
-        return z.reshape(B, T, -1)
+        x = xyz.reshape(B * T, N, 3).transpose(1, 2)             # (BT, 3, N)
+        f = self.mlp(x).transpose(1, 2)                            # (BT, N, F)
+        return f.reshape(B, T, N, -1)
 
 
 class FrameDecoder(nn.Module):
-    """(B, T, latent_dim) -> (B, T, K, 3) ordered canonical points."""
-    def __init__(self, latent_dim=128, K=128, hidden=256):
-        super().__init__()
-        self.K = K
-        self.mlp = nn.Sequential(
-            nn.Linear(latent_dim, hidden),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden, K * 3),
-        )
+    """K learnable queries cross-attend to per-point features -> K xyz.
 
-    def forward(self, latent):
-        B, T, _ = latent.shape
-        out = self.mlp(latent)
-        return out.reshape(B, T, self.K, 3)
+    Each query embedding e_k is shared across frames and samples; the k-th
+    output index always asks "the same question", so over training it
+    learns to localise the same anatomical region -> correspondence.
+    """
+    def __init__(self, feature_dim=128, K=512, query_dim=64, heads=4, ffn_mult=2):
+        super().__init__()
+        assert feature_dim % heads == 0
+        self.K = K
+        self.heads = heads
+        self.head_dim = feature_dim // heads
+        self.queries = nn.Parameter(torch.randn(K, query_dim) * 0.02)
+        self.q_proj = nn.Linear(query_dim, feature_dim)
+        self.k_proj = nn.Linear(feature_dim, feature_dim)
+        self.v_proj = nn.Linear(feature_dim, feature_dim)
+        self.out_proj = nn.Linear(feature_dim, feature_dim)
+        self.norm1 = nn.LayerNorm(feature_dim)
+        self.norm2 = nn.LayerNorm(feature_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim * ffn_mult),
+            nn.GELU(),
+            nn.Linear(feature_dim * ffn_mult, feature_dim),
+        )
+        self.to_xyz = nn.Linear(feature_dim, 3)
+
+    def forward(self, point_feats):
+        B, T, N, F = point_feats.shape
+        BT = B * T
+        x = point_feats.reshape(BT, N, F)
+        q = self.q_proj(self.queries).unsqueeze(0).expand(BT, -1, -1)   # (BT, K, F)
+
+        Q = q.reshape(BT, self.K, self.heads, self.head_dim).transpose(1, 2)
+        Kp = self.k_proj(x).reshape(BT, N, self.heads, self.head_dim).transpose(1, 2)
+        Vp = self.v_proj(x).reshape(BT, N, self.heads, self.head_dim).transpose(1, 2)
+
+        attn = (Q @ Kp.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn = attn.softmax(dim=-1)
+        out = (attn @ Vp).transpose(1, 2).reshape(BT, self.K, F)
+        out = self.out_proj(out)
+        out = self.norm1(out + q)
+        out = self.norm2(out + self.ffn(out))
+        xyz = self.to_xyz(out).reshape(B, T, self.K, 3)
+        return xyz
 
 
 class MotionCleanestLinXLAE(MotionCleanestLinXLQuatHead):
     def __init__(self, *args,
-                 ae_latent_dim=128, ae_K=128, ae_decoder_hidden=256,
+                 ae_feature_dim=128, ae_K=512, ae_query_dim=64, ae_heads=4,
                  chamfer_weight=0.05, temporal_weight=0.5,
                  ae_warmstart=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
-        self.encoder = FrameEncoder(latent_dim=ae_latent_dim)
+        self.encoder = FrameEncoder(feature_dim=ae_feature_dim)
         self.decoder = FrameDecoder(
-            latent_dim=ae_latent_dim, K=ae_K, hidden=ae_decoder_hidden
+            feature_dim=ae_feature_dim, K=ae_K,
+            query_dim=ae_query_dim, heads=ae_heads,
         )
         self.ae_K = ae_K
         self.chamfer_weight = chamfer_weight
@@ -103,11 +131,8 @@ class MotionCleanestLinXLAE(MotionCleanestLinXLQuatHead):
                   f'best_epoch={ckpt.get("best_epoch", "n/a")})')
 
     def _sample_points(self, inputs):
-        # Override parent: canonical points carry index correspondence; we must
-        # NOT random-permute. But we DO honour the pts_size ramp by slicing
-        # the first pts_size indices sequentially, preserving correspondence
-        # on those indices across batches (always the same anatomical
-        # regions, just fewer of them at early epochs).
+        # First pts_size canonical sequentially: preserves correspondence
+        # on those indices, honours the parent's dynamic pts_size ramp.
         points = inputs.permute(0, 3, 1, 2).contiguous()
         point_count = points.shape[3]
         keep = min(self.pts_size, point_count)
@@ -117,33 +142,28 @@ class MotionCleanestLinXLAE(MotionCleanestLinXLQuatHead):
         if isinstance(inputs, dict):
             inputs = inputs['points']
         B, T, N, _ = inputs.shape
-        xyz_orig = inputs[..., :3]                              # (B, T, N, 3)
+        xyz_orig = inputs[..., :3]
 
-        # AE: random no-correspondence -> latent -> canonical ordered K-pts
-        latent = self.encoder(xyz_orig)
-        canonical = self.decoder(latent)                        # (B, T, K, 3)
+        point_feats = self.encoder(xyz_orig)                        # (B, T, N, F)
+        canonical = self.decoder(point_feats)                        # (B, T, K, 3)
 
-        # Append normalised per-frame time channel for classifier input
         t_idx = torch.arange(T, device=xyz_orig.device, dtype=xyz_orig.dtype)
         t_idx = (t_idx - t_idx.mean()) / t_idx.std().clamp(min=1e-6)
         t_channel = t_idx.view(1, T, 1, 1).expand(B, T, self.ae_K, 1)
         classifier_input = torch.cat([canonical, t_channel], dim=-1)
 
-        # Quat-head aux from ORIGINAL input distribution (the 91.08 mechanism).
-        coords_orig = xyz_orig.permute(0, 3, 1, 2).contiguous()  # (B, 3, T, N)
-        quat = _inertia_quat(coords_orig)                         # (B*T, 4)
+        coords_orig = xyz_orig.permute(0, 3, 1, 2).contiguous()
+        quat = _inertia_quat(coords_orig)
         quat_traj = quat.reshape(B, T * 4)
-        aux_logits = self.quat_head(quat_traj)                    # (B, num_classes)
+        aux_logits = self.quat_head(quat_traj)
 
-        # Main path on canonical points
         coords = self._sample_points(classifier_input)
         fea3 = self._encode_sampled_points(coords)
-        output = self.stage5(fea3)
-        output = self.pool5(output)
-        output = self.global_bn(output)
-        main_logits = self.classify_features(output.flatten(1))
+        out = self.stage5(fea3)
+        out = self.pool5(out)
+        out = self.global_bn(out)
+        main_logits = self.classify_features(out.flatten(1))
 
-        # AE training losses
         if self.training:
             BT = B * T
             chamfer = _chamfer_distance(
@@ -158,5 +178,4 @@ class MotionCleanestLinXLAE(MotionCleanestLinXLQuatHead):
         else:
             self.aux_loss = None
 
-        # Output = main + decorative quat-head aux (the 91.08 ensemble)
         return main_logits + self.quat_head_scale * aux_logits
