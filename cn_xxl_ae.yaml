@@ -52,8 +52,8 @@ model_args:
   lxl_residual_scale: 0.7
   # AE-specific
   ae_latent_dim: 128
-  ae_K: 512                    # canonical point count = full input count
-  ae_decoder_hidden: 384
+  ae_K: 128                    # canonical point count = full input count
+  ae_decoder_hidden: 256
   chamfer_weight: 0.05         # reconstruction weight
   temporal_weight: 0.5         # temporal smoothness -> correspondence
   ae_warmstart: ./work_dir/ae_pretrain/ae_pretrain.pt   # self-supervised pretrain

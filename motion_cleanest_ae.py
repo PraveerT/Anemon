@@ -104,9 +104,14 @@ class MotionCleanestLinXLAE(MotionCleanestLinXLQuatHead):
 
     def _sample_points(self, inputs):
         # Override parent: canonical points carry index correspondence; we must
-        # NOT random-permute or sub-sample them. Use all K points in order.
+        # NOT random-permute. But we DO honour the pts_size ramp by slicing
+        # the first pts_size indices sequentially, preserving correspondence
+        # on those indices across batches (always the same anatomical
+        # regions, just fewer of them at early epochs).
         points = inputs.permute(0, 3, 1, 2).contiguous()
-        return points[:, :self.coord_channels]
+        point_count = points.shape[3]
+        keep = min(self.pts_size, point_count)
+        return points[:, :self.coord_channels, :, :keep]
 
     def forward(self, inputs):
         if isinstance(inputs, dict):
