@@ -1,12 +1,13 @@
-"""Apply a frozen AE to every NVGesture sample and save the canonical
-ordered point cloud to disk.
+"""Apply the frozen v3 (opacity-gated) AE to every NVGesture sample and
+save a 512-point canonical dataset, picking the top-512 by opacity per
+frame so the classifier sees only well-anchored points.
 
-Output: dataset/Nvidia/Processed/canonical_{phase}.npy
-  shape (num_samples, T, K, 4) where the 4th channel is per-frame
-  normalised time (matches the original NvidiaLoader layout).
+Per-frame procedure:
+  canonical (K=1024, 3), opacity (K,)
+  -> take top 512 indices by opacity descending
+  -> output (512, 3 + 1) = (xyz + time)
 
-Run from experiments/:
-    python3 -u bake_canonical.py --ckpt work_dir/ae_pretrain/ae_pretrain.pt
+Output: dataset/Nvidia/Processed/canonical_{phase}.npy  (N, 32, 512, 4)
 """
 import argparse
 import os
@@ -27,12 +28,14 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--ckpt', type=str, required=True)
     p.add_argument('--out-dir', type=str, default='../dataset/Nvidia/Processed')
-    p.add_argument('--batch-size', type=int, default=8)
+    p.add_argument('--batch-size', type=int, default=4)
     p.add_argument('--num-worker', type=int, default=8)
+    p.add_argument('--keep-K', type=int, default=512,
+                   help='How many top-opacity canonical to keep per frame.')
     return p.parse_args()
 
 
-def bake_phase(phase, model, K, batch_size, num_worker, out_path):
+def bake_phase(phase, model, K, keep_K, batch_size, num_worker, out_path):
     dataset = NvidiaLoader(framerate=32, phase=phase)
     loader = DataLoader(
         dataset, batch_size=batch_size, shuffle=False,
@@ -40,29 +43,30 @@ def bake_phase(phase, model, K, batch_size, num_worker, out_path):
     )
     print(f'[bake] {phase}: {len(dataset)} samples')
 
-    out = np.empty((len(dataset), 32, K, 4), dtype=np.float32)
+    out = np.empty((len(dataset), 32, keep_K, 4), dtype=np.float32)
     labels = np.empty(len(dataset), dtype=np.int64)
     cursor = 0
     t0 = time.time()
     with torch.no_grad():
         for batch_idx, data in enumerate(loader):
-            inputs = data[0].cuda(non_blocking=True)             # (B, T, N, 4)
+            inputs = data[0].cuda(non_blocking=True)
             lbl = data[1]
             xyz = inputs[..., :3]
             B, T, N, _ = xyz.shape
 
             point_feats = model['encoder'](xyz)
-            canonical = model['decoder'](point_feats)             # (B, T, K, 3)
+            canonical = model['decoder'](point_feats)                  # (B,T,K,3)
+            # v2 has no opacity -- take first keep_K sequentially.
+            top_xyz = canonical[:, :, :keep_K]                          # (B, T, keep_K, 3)
 
             t_idx = torch.arange(T, device=xyz.device, dtype=xyz.dtype)
             t_norm = (t_idx - t_idx.mean()) / t_idx.std().clamp(min=1e-6)
-            t_channel = t_norm.view(1, T, 1, 1).expand(B, T, K, 1)
-            payload = torch.cat([canonical, t_channel], dim=-1)   # (B, T, K, 4)
+            t_channel = t_norm.view(1, T, 1, 1).expand(B, T, keep_K, 1)
+            payload = torch.cat([top_xyz, t_channel], dim=-1)          # (B, T, keep_K, 4)
 
             out[cursor:cursor + B] = payload.cpu().numpy()
             labels[cursor:cursor + B] = lbl.numpy() if hasattr(lbl, 'numpy') else lbl
             cursor += B
-
             if batch_idx % 10 == 0:
                 print(f'[bake] {phase}: {cursor}/{len(dataset)}')
 
@@ -79,14 +83,15 @@ def main():
     ckpt = torch.load(args.ckpt, map_location='cpu')
     cfg = ckpt['config']
     K = cfg['K']
-    print(f'[bake] AE config: K={K}, feature_dim={cfg["feature_dim"]}, '
-          f'query_dim={cfg["query_dim"]}, heads={cfg["heads"]}')
-    print(f'[bake] AE pretrain score={ckpt["best_score"]:.4f} at ep{ckpt["best_epoch"]}')
+    print(f'[bake] AE config: K={K}, feature_dim={cfg["feature_dim"]}')
+    print(f'[bake] AE pretrain chamfer={ckpt["best_score"]:.4f} at ep{ckpt["best_epoch"]}')
+    print(f'[bake] keeping top-{args.keep_K} by opacity per frame')
 
     enc = FrameEncoder(feature_dim=cfg['feature_dim']).cuda()
     dec = FrameDecoder(
         feature_dim=cfg['feature_dim'], K=K,
         query_dim=cfg['query_dim'], heads=cfg['heads'],
+        num_attn_blocks=cfg['num_attn_blocks'], ffn_mult=cfg['ffn_mult'],
     ).cuda()
     enc.load_state_dict(ckpt['encoder']); enc.eval()
     dec.load_state_dict(ckpt['decoder']); dec.eval()
@@ -94,7 +99,7 @@ def main():
 
     for phase in ('train', 'test'):
         out_path = os.path.join(args.out_dir, f'canonical_{phase}.npy')
-        bake_phase(phase, model, K, args.batch_size, args.num_worker, out_path)
+        bake_phase(phase, model, K, args.keep_K, args.batch_size, args.num_worker, out_path)
 
 
 if __name__ == '__main__':

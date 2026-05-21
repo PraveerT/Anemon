@@ -20,7 +20,7 @@ framesize: 32
 pts_size: 172
 dynamic_pts_size: true
 strict_load: false
-weights: null
+weights: ./work_dir/cn_xxl_quat_head/epoch75_model.pt
 
 optimizer_args:
   scheduler: constant_then_cosine
@@ -30,7 +30,7 @@ optimizer_args:
   base_lr: 0.00012
   step: [60, 70, 75]
   weight_decay: 0.03
-  start_epoch: 0
+  start_epoch: 75
   nesterov: false
 
 train_loader_args: {phase: train, framerate: 32}

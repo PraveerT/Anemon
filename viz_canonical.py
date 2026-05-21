@@ -1,6 +1,6 @@
-"""Render canonical-vs-input animations for many samples across classes.
-
-Output: viz_out/canonical_sample_NN_classCC.gif for 12 test samples.
+"""Render canonical-vs-input animations across 12 gesture classes.
+v3: fades each canonical point by its opacity so "inactive" queries
+disappear instead of cluttering the plot.
 """
 import os
 import sys
@@ -29,14 +29,14 @@ enc.load_state_dict(ckpt['encoder']); enc.eval()
 dec = FrameDecoder(
     feature_dim=cfg['feature_dim'], K=K,
     query_dim=cfg['query_dim'], heads=cfg['heads'],
+    num_attn_blocks=cfg['num_attn_blocks'], ffn_mult=cfg['ffn_mult'],
 ).cuda()
 dec.load_state_dict(ckpt['decoder']); dec.eval()
 
 ds = NvidiaLoader(framerate=32, phase='test')
-print(f'AE config: K={K}, feature_dim={cfg["feature_dim"]}, query_dim={cfg["query_dim"]}, heads={cfg["heads"]}')
-print(f'AE pretrain score={ckpt["best_score"]:.4f} at ep{ckpt["best_epoch"]}')
+print(f'AE config: K={K}, sparsity_target={cfg["sparsity_target"]}')
+print(f'AE pretrain chamfer={ckpt["best_score"]:.4f} at ep{ckpt["best_epoch"]}')
 
-# Pick 12 samples spanning different classes by scanning labels.
 n_total = len(ds)
 seen_classes = set()
 chosen = []
@@ -48,7 +48,6 @@ for idx in range(n_total):
     chosen.append((idx, lbl))
     if len(chosen) >= 12:
         break
-
 print(f'chosen samples: {chosen}')
 
 rng = np.random.RandomState(7)
@@ -60,10 +59,13 @@ for s_i, (ds_idx, label) in enumerate(chosen):
 
     with torch.no_grad():
         feats = enc(xyz_full)
-        canonical = dec(feats)
+        canonical, opacity = dec(feats)
 
     inp_np = pts[..., :3].cpu().numpy()
     can_np = canonical[0].cpu().numpy()
+    op_np = opacity[0].cpu().numpy()                                 # (32, K)
+    # Per-point alpha = opacity. Combine with color: RGBA.
+    rgba = np.concatenate([np.broadcast_to(idx_colors, (32, K, 3)), op_np[..., None]], axis=-1)
 
     all_pts = np.concatenate([inp_np.reshape(-1, 3), can_np.reshape(-1, 3)], axis=0)
     mn = all_pts.min(axis=0)
@@ -87,9 +89,11 @@ for s_i, (ds_idx, label) in enumerate(chosen):
                     s=1.5, c='#2080d0', alpha=0.5)
         ax1.set_title(f'input N=512 | t={t}', fontsize=8)
 
+        # Active count this frame
+        n_active = int((op_np[t] > 0.5).sum())
         ax2.scatter(can_np[t, :, 0], can_np[t, :, 1], can_np[t, :, 2],
-                    s=4, c=idx_colors, alpha=0.8)
-        ax2.set_title(f'canonical K={K}', fontsize=8)
+                    s=4, c=rgba[t], edgecolors='none')
+        ax2.set_title(f'canonical K={K} (active={n_active})', fontsize=8)
 
         fig.suptitle(f'sample {ds_idx} · class {label}', fontsize=9)
         return ()
