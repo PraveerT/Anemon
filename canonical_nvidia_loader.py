@@ -19,16 +19,23 @@ class CanonicalNvidiaLoader(data.Dataset):
     _preloaded = {}
 
     def __init__(self, framerate, valid_subject=None, phase='train',
-                 datatype='depth', inputs_type='pts'):
+                 datatype='depth', inputs_type='pts', max_pts=None):
         self.phase = phase
         self.framerate = framerate
+        self.max_pts = max_pts
         prefix = '../dataset/Nvidia/Processed'
         canon_path = os.path.join(prefix, f'canonical_{phase}.npy')
         label_path = os.path.join(prefix, f'canonical_{phase}_labels.npy')
 
-        key = (phase, canon_path)
+        key = (phase, canon_path, max_pts)
         if key not in CanonicalNvidiaLoader._preloaded:
             arr = np.load(canon_path)
+            # Subsample first max_pts canonical indices so the classifier
+            # sees the same shape (N=512) as the standard NvidiaLoader. The
+            # first max_pts indices are stable across batches/epochs, so
+            # whatever correspondence exists is preserved on those indices.
+            if max_pts is not None and arr.shape[2] > max_pts:
+                arr = arr[:, :, :max_pts]
             lbl = np.load(label_path)
             print(f'[canonical-loader] {phase}: {arr.shape} '
                   f'{arr.nbytes / 1024 / 1024:.1f} MB')
