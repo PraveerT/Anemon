@@ -1,0 +1,77 @@
+alpha: 0.7
+batch_size: 8
+config: cn_skewtcc_skew.yaml
+dataloader: nvidia_dataloader.NvidiaLoader
+device: 0
+dynamic_pts_size: true
+eval_interval: 1
+framesize: 32
+freeze: null
+ignore_weights: []
+log_interval: 50
+min_best_acc: 91.0
+model: models.motion_skewtcc.MotionSkewTCC
+model_args:
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  lxl_bidirectional: true
+  lxl_dropout: 0.3
+  lxl_hidden_dim: 256
+  lxl_mlp_dim: 512
+  lxl_num_layers: 4
+  lxl_residual_scale: 0.7
+  multi_scale_num_scales: 5
+  num_classes: 25
+  pts_size: 172
+  r: 12
+  lags:
+  - 1
+  - 2
+  head_dropout: 0.3
+  mode: skew
+num_epoch: 150
+num_worker: 4
+optimizer_args:
+  base_lr: 0.00012
+  cosine_start: 75
+  eta_min_ratio: 0.01
+  lock_start: 100
+  nesterov: false
+  num_epochs: 150
+  optimizer: Adam
+  scheduler: constant_then_cosine_then_lock
+  start_epoch: 0
+  step:
+  - 60
+  - 70
+  - 75
+  weight_decay: 0.03
+phase: train
+print_log: true
+pts_size: 172
+random_fix: true
+random_seed: 0
+resume: false
+save_interval: 5
+spatial_source_prefix: ''
+spatial_target_prefix: spatial_branch
+spatial_weights: null
+strict_load: false
+temporal_source_prefix: ''
+temporal_target_prefix: temporal_branch
+temporal_weights: null
+temperature: 3.0
+test_batch_size: 8
+test_loader_args:
+  framerate: 32
+  phase: test
+train_loader_args:
+  framerate: 32
+  phase: train
+use_soft_labels: false
+valid_loader_args: {}
+weights: null
+work_dir: ./work_dir/cn_skewtcc_skew/

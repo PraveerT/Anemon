@@ -13,9 +13,9 @@ from torch.utils.data import DataLoader, Dataset
 
 RGB = '/notebooks/cvpr_data/rgb'
 DEPTH = '/notebooks/cvpr_data/depth'
-SPLITS = '/notebooks/cvpr_data/dataset_splits'
-CACHE = '/notebooks/Anemon/dataset/Nvidia/Processed/rgb_fgcrop_cache'
-WD = '/notebooks/Anemon/experiments/work_dir/rgb_fgcrop_r2p1d'  # overridden in main by --arch
+SPLITS = os.environ.get('SPLITS', '/notebooks/cvpr_data/dataset_splits')
+CACHE = os.environ.get('RGB_CACHE', '/notebooks/Anemon/dataset/Nvidia/Processed/rgb_fgcrop_cache')
+WD = '/notebooks/Anemon/experiments/work_dir/rgb_fgcrop_r2p1d'  # overridden in main by --arch / --tag
 # r2plus1d kinetics norm; swin3d/mvit use imagenet-ish norm (set per-arch in main)
 KMEAN = np.array([0.43216, 0.394666, 0.37645], np.float32)
 KSTD = np.array([0.22803, 0.22145, 0.216989], np.float32)
@@ -69,9 +69,9 @@ def build_cache(split, phase, size=128):
 
 
 class DS(Dataset):
-    def __init__(self, clips, labs, sigs, frames=40, crop=112, train=False):
+    def __init__(self, clips, labs, sigs, frames=40, crop=112, train=False, resize=0):
         self.c, self.l, self.s = clips, labs, sigs
-        self.frames, self.crop, self.train = frames, crop, train
+        self.frames, self.crop, self.train, self.resize = frames, crop, train, resize
         self.cache = clips.shape[2]; self.maxf = clips.shape[1]
 
     def __len__(self):
@@ -99,7 +99,10 @@ class DS(Dataset):
             # light color jitter (brightness/contrast)
             x = np.clip(x * np.random.uniform(0.8, 1.2) + np.random.uniform(-0.08, 0.08), 0, 1)
         x = (x - KMEAN) / KSTD
-        return torch.from_numpy(x).permute(3, 0, 1, 2).float(), int(self.l[i]), str(self.s[i])
+        t = torch.from_numpy(x).permute(3, 0, 1, 2).float()      # (3,T,H,W)
+        if self.resize and self.resize != t.shape[-1]:
+            t = nn.functional.interpolate(t, size=(self.resize, self.resize), mode='bilinear', align_corners=False)
+        return t, int(self.l[i]), str(self.s[i])
 
 
 @torch.no_grad()
@@ -123,19 +126,22 @@ def main():
     ap.add_argument('--blr', type=float, default=4e-5)
     ap.add_argument('--frames', type=int, default=40)
     ap.add_argument('--arch', default='r2plus1d_18')
+    ap.add_argument('--cache-size', type=int, default=128)
+    ap.add_argument('--crop', type=int, default=112)
+    ap.add_argument('--resize', type=int, default=0)
     a = ap.parse_args()
     global WD, KMEAN, KSTD
-    WD = f'/notebooks/Anemon/experiments/work_dir/rgb_fgcrop_{a.arch}'
+    WD = os.environ.get('WD', f'/notebooks/Anemon/experiments/work_dir/rgb_fgcrop_{a.arch}')
     if a.arch != 'r2plus1d_18':   # swin3d / mvit use imagenet-style norm
         KMEAN = np.array([0.485, 0.456, 0.406], np.float32)
         KSTD = np.array([0.229, 0.224, 0.225], np.float32)
     os.makedirs(WD, exist_ok=True)
     random.seed(0); np.random.seed(0); torch.manual_seed(0)
-    tr = build_cache('train.txt', 'train'); va = build_cache('valid.txt', 'valid')
+    tr = build_cache('train.txt', 'train', size=a.cache_size); va = build_cache('valid.txt', 'valid', size=a.cache_size)
     mk = lambda ds, sh: DataLoader(ds, batch_size=a.bs, shuffle=sh, num_workers=6, drop_last=sh, pin_memory=True, persistent_workers=True)
-    dtr = mk(DS(*tr, frames=a.frames, train=True), True)
-    dva = mk(DS(*va, frames=a.frames, train=False), False)
-    dtr_e = mk(DS(*tr, frames=a.frames, train=False), False)
+    dtr = mk(DS(*tr, frames=a.frames, crop=a.crop, train=True, resize=a.resize), True)
+    dva = mk(DS(*va, frames=a.frames, crop=a.crop, train=False, resize=a.resize), False)
+    dtr_e = mk(DS(*tr, frames=a.frames, crop=a.crop, train=False, resize=a.resize), False)
     dev = 'cuda'
     import torchvision.models.video as V
     if a.arch == 'r2plus1d_18':

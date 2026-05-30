@@ -1,0 +1,18 @@
+Promote clean correspondence control to 85.48 baseline
+
+Achieved:
+- Promoted the clean f16p128 correspondence control as the depth-side baseline: depth_corr_qcc_f16p128_ceonly_noqinject reaches 67.01 branch top-1 and 85.48 fused top-1 at epoch 202.
+- Published the clean 85.48 fused logits to experiments/work_dir/depth_small so Anemon reports depth_small=85.48.
+- Corrected the project status note to state that the prior QCC/cycle-loss path failed ablation: QCC+cycle+Kabsch injection scored 84.65 fused, CE-only with Kabsch injection scored 85.06, and CE-only without Kabsch injection scored 85.48.
+- Made train_corr_qcc_fusion.py default to the clean control path with qcc_weight=0, cycle_weight=0, and quat_inject disabled unless explicitly requested.
+- Kept the old QCC/cycle and Kabsch-injection switches available only as explicit ablation options, not as the default method.
+- Updated the sidepanel server parser so the phone fetcher exposes branch/fused accuracy, q loss, cycle loss, fusion weight, temperatures, live epoch, and batch for correspondence runs.
+
+How:
+- Added an optional --quat-inject/--no-quat-inject path around the Kabsch-quaternion feature projection and set the default to no injection.
+- Set default --qcc-weight and --cycle-weight to 0.0 because matched controls showed those losses were decorative or harmful in this implementation.
+- Rewrote QCC_DEPTH_CORRESPONDENCE_STATUS.md to identify 85.48 as the clean baseline to beat and to document the failed QCC/cycle ablations.
+- Parsed the correspondence log line format in sidepanel_api/server.py so Railway/phone status no longer shows empty epochs for these runs.
+
+Next:
+- Start new quaternion/cycle experiments from the clean 85.48 control and only keep mechanisms that beat it in matched ablations.

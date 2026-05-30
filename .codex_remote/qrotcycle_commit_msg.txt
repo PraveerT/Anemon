@@ -1,0 +1,17 @@
+Add quaternion rotation-cycle consistency improvement
+
+Achieved:
+- Added a classifier-tied quaternion rotation-cycle consistency mechanism to train_corr_qcc_fusion.py.
+- Ran the light q-rot-cycle setting on the f16p128 correspondence branch: rot_cycle_weight=0.02, rot_aug_ce_weight=0, no Kabsch injection, no auxiliary QCC/cycle loss.
+- Improved over the clean 85.48 control: depth_corr_qrotcycle_f16p128_w002_ce0 reaches 85.89 fused top-1 / 96.06 top-5 at epoch 117.
+- Published the 85.89 fused logits to experiments/work_dir/depth_small so Anemon reports depth_small=85.89.
+- Verified the heavier q-rot-cycle setting with rotated CE only tied 85.48 and lowered branch solo, so the kept setting is consistency-only.
+
+How:
+- Sample a random unit quaternion per batch item.
+- Rotate the correspondence pointcloud by that quaternion.
+- Rotate the result back by the inverse quaternion to form a closed rotation cycle.
+- Penalize KL prediction drift across original, rotated, and inverse-cycled classifier outputs.
+- Keep the loss tied to class evidence instead of an unused auxiliary quaternion head.
+- Extend the sidepanel parser to expose rot_loss while remaining compatible with older correspondence logs.
+- Update QCC_DEPTH_CORRESPONDENCE_STATUS.md with the clean 85.48 control, failed decorative QCC ablations, and the successful 85.89 q-rot-cycle run.

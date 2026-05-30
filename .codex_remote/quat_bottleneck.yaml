@@ -1,0 +1,76 @@
+alpha: 0.7
+batch_size: 8
+config: quat_bottleneck.yaml
+dataloader: nvidia_dataloader.NvidiaLoader
+device: 0
+dynamic_pts_size: true
+eval_interval: 1
+framesize: 32
+freeze: null
+ignore_weights: []
+log_interval: 50
+min_best_acc: 0.0
+model: models.motion_cleanest_quat_bottleneck.MotionQuatBottleneck
+model_args:
+  num_classes: 25
+  pts_size: 172
+  knn:
+  - 32
+  - 24
+  - 48
+  - 24
+  topk: 8
+  multi_scale_num_scales: 5
+  coord_channels: 4
+  expand: 1024
+  head_dropout: 0.3
+  mode: quat
+num_epoch: 150
+num_worker: 8
+optimizer_args:
+  base_lr: 0.00012
+  cosine_start: 75
+  eta_min_ratio: 0.01
+  lock_start: 100
+  nesterov: false
+  num_epochs: 150
+  optimizer: Adam
+  scheduler: constant_then_cosine_then_lock
+  start_epoch: 0
+  step:
+  - 60
+  - 70
+  - 75
+  weight_decay: 0.03
+phase: train
+print_log: true
+pts_extra_epochs: null
+pts_extra_target: null
+pts_freeze_after_ep: null
+pts_ramp_epochs: null
+pts_ramp_target: null
+pts_random_range: null
+pts_size: 172
+qcc_weight_schedule: null
+random_fix: true
+random_seed: 0
+resume: true
+save_interval: 5
+spatial_source_prefix: ''
+spatial_target_prefix: spatial_branch
+spatial_weights: null
+temporal_source_prefix: ''
+temporal_target_prefix: temporal_branch
+temporal_weights: null
+temperature: 3.0
+test_batch_size: 8
+test_loader_args:
+  framerate: 32
+  phase: test
+train_loader_args:
+  framerate: 32
+  phase: train
+use_soft_labels: false
+valid_loader_args: {}
+weights: null
+work_dir: ./work_dir/quat_bottleneck/
