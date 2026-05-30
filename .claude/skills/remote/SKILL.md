@@ -15,6 +15,33 @@ Run this first — it handles everything (starts notebook if stopped, connects, 
 
 !`jlab setup 2>&1`
 
+## Side panel (auto-start)
+
+Ensure the training-progress side panel is running in the current Windows Terminal tab. Idempotent: only spawns if the panel pane or fetcher is missing.
+
+!`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:/Users/Clezv/Documents/Anemon/sidepanel/ensure-panel.ps1" 2>&1`
+
+### Restart the fetcher
+
+If the side panel shows stale data or "[no training log found]" even though a run is active, the fetcher is stuck (typically after `jlab setup` changed the notebook URL/token). Force-restart it without touching the panel pane:
+
+```powershell
+pwsh -NoProfile -Command "
+$fetchPid = Join-Path $env:TEMP 'anemon_tg_fetch.pid'
+if (Test-Path $fetchPid) {
+    $old = Get-Content $fetchPid
+    Stop-Process -Id $old -Force -ErrorAction SilentlyContinue
+    Remove-Item $fetchPid -Force
+}
+$fetch = 'C:/Users/Clezv/Documents/Anemon/sidepanel/fetch.ps1'
+$proc = Start-Process pwsh -ArgumentList @('-NoLogo','-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',$fetch) -WindowStyle Hidden -PassThru
+Set-Content -Path $fetchPid -Value $proc.Id
+Write-Output \"new fetcher pid $($proc.Id)\"
+"
+```
+
+**When to do this:** any time `jlab setup` rotates the connection (notebook restart, URL change, token rotation), the fetcher process keeps its old client config in memory and goes stale. Killing and re-spawning it picks up the new config from disk on next iteration.
+
 ## If arguments were provided
 
 Run this command on the remote: `jlab exec "$ARGUMENTS"`

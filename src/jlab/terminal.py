@@ -1,10 +1,16 @@
 import json
-import msvcrt
 import os
 import ssl
 import sys
 import threading
 import time
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import select
+    import termios
+    import tty
 
 import requests
 import websocket
@@ -133,31 +139,65 @@ class TerminalConnection:
         reader = threading.Thread(target=self._read_loop, daemon=True)
         reader.start()
 
-        try:
-            while self._running:
-                if msvcrt.kbhit():
-                    ch = msvcrt.getwch()
-                    if ch == '\x00' or ch == '\xe0':
-                        ch2 = msvcrt.getwch()
-                        arrow_map = {
-                            'H': '\x1b[A',  # Up
-                            'P': '\x1b[B',  # Down
-                            'M': '\x1b[C',  # Right
-                            'K': '\x1b[D',  # Left
-                            'G': '\x1b[H',  # Home
-                            'O': '\x1b[F',  # End
-                            'I': '\x1b[5~', # Page Up
-                            'Q': '\x1b[6~', # Page Down
-                            'S': '\x1b[3~', # Delete
-                        }
-                        self._send(arrow_map.get(ch2, ''))
-                    elif ch == '\x04':
-                        break
+        if sys.platform == "win32":
+            try:
+                while self._running:
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getwch()
+                        if ch == '\x00' or ch == '\xe0':
+                            ch2 = msvcrt.getwch()
+                            arrow_map = {
+                                'H': '\x1b[A',  # Up
+                                'P': '\x1b[B',  # Down
+                                'M': '\x1b[C',  # Right
+                                'K': '\x1b[D',  # Left
+                                'G': '\x1b[H',  # Home
+                                'O': '\x1b[F',  # End
+                                'I': '\x1b[5~', # Page Up
+                                'Q': '\x1b[6~', # Page Down
+                                'S': '\x1b[3~', # Delete
+                            }
+                            self._send(arrow_map.get(ch2, ''))
+                        elif ch == '\x04':
+                            break
+                        else:
+                            self._send(ch)
                     else:
+                        time.sleep(0.01)
+            except (EOFError, KeyboardInterrupt):
+                pass
+            finally:
+                self._running = False
+        else:
+            fd = sys.stdin.fileno()
+            try:
+                old_settings = termios.tcgetattr(fd)
+            except termios.error:
+                try:
+                    while self._running:
+                        time.sleep(0.1)
+                except (EOFError, KeyboardInterrupt):
+                    pass
+                finally:
+                    self._running = False
+                return
+
+            try:
+                tty.setraw(fd)
+                while self._running:
+                    r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                    if r:
+                        ch = sys.stdin.read(1)
+                        if not ch:
+                            break
+                        if ch == '\x04':  # Ctrl-D
+                            break
                         self._send(ch)
-                else:
-                    time.sleep(0.01)
-        except (EOFError, KeyboardInterrupt):
-            pass
-        finally:
-            self._running = False
+            except (EOFError, KeyboardInterrupt):
+                pass
+            finally:
+                self._running = False
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except termios.error:
+                    pass
