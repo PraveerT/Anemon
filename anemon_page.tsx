@@ -15,9 +15,6 @@ type EpochRow = {
   te_p5: number | null;
 };
 
-type LBRow = Record<string, string>;
-type Leaderboard = Record<string, LBRow[][]> | null | undefined;
-
 type Status = {
   ts?: string;
   run?: string;
@@ -28,19 +25,10 @@ type Status = {
   epochs?: EpochRow[];
   best?: { ep: number; p1: number } | null;
   now?: { ep?: number; batch?: string; lr?: number | null };
-  leaderboard?: Leaderboard;
 };
 
 const fmt = (n: number | null | undefined, d = 1) =>
   n == null || Number.isNaN(n) ? "—" : Number(n).toFixed(d);
-
-function stripMd(s: string): string {
-  return s
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/\s*\*\([^)]*\)\*/g, "")
-    .trim();
-}
 
 function Bar({ pct, warn = 70, bad = 90 }: { pct: number; warn?: number; bad?: number }) {
   const clamped = Math.max(0, Math.min(100, pct));
@@ -61,49 +49,43 @@ function KV({ k, v, color }: { k: string; v: string; color?: string }) {
   );
 }
 
-function CompactTable({ rows }: { rows: LBRow[] }) {
-  if (!rows || rows.length === 0) return null;
-  const cols = Object.keys(rows[0]);
+// Fusion summary (no-DSN, NVGesture test set = 482). Offline eval numbers; update
+// QMS once the warm-start finetune lands. n = correct/482.
+const FUSION_MODELS = [
+  { name: "CN-XXL", sub: "spatial · point-cloud", acc: 91.29, n: 440 },
+  { name: "QMS", sub: "quaternion multiscale", acc: 91.29, n: 440 },
+  { name: "FG83", sub: "depth · fg-crop", acc: 83.61, n: 403 },
+];
+const FUSION_BLENDS = [
+  { name: "CN + FG", acc: 91.91, n: 443, best: false },
+  { name: "CN + QMS + FG", acc: 92.12, n: 444, best: true },
+];
+
+function FusionRow({ name, sub, acc, n, best }: { name: string; sub?: string; acc: number; n: number; best?: boolean }) {
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed" }}>
-      <thead>
-        <tr>
-          {cols.map((c, i) => (
-            <th key={c} style={{
-              padding: "3px 4px",
-              textAlign: i === cols.length - 1 ? "right" : "left",
-              color: "#888",
-              fontWeight: 500,
-              textTransform: "uppercase",
-              letterSpacing: "0.4px",
-              fontSize: 9,
-              borderBottom: "1px solid #252525",
-            }}>{c}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, ri) => (
-          <tr key={ri}>
-            {cols.map((c, i) => {
-              const v = stripMd(r[c] ?? "");
-              const isAcc = i === cols.length - 1 && /^[\d.]+$/.test(v);
-              return (
-                <td key={c} style={{
-                  padding: "3px 4px",
-                  textAlign: i === cols.length - 1 ? "right" : "left",
-                  color: isAcc ? "#6f9" : "#d0d0d0",
-                  fontWeight: isAcc ? 600 : 400,
-                  wordBreak: "break-word",
-                  lineHeight: 1.3,
-                  verticalAlign: "top",
-                }}>{v}</td>
-              );
-            })}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "3px 0" }}>
+      <span style={{ flex: 1, minWidth: 0, color: best ? "#6f9" : "#d0d0d0", fontWeight: best ? 700 : 500, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {name}
+        {best && <span style={{ color: "#6f9", marginLeft: 5 }}>★</span>}
+        {sub && <span style={{ color: "#666", fontWeight: 400, fontSize: 10, marginLeft: 6 }}>{sub}</span>}
+      </span>
+      <span style={{ color: best ? "#6f9" : "#e8e8e8", fontWeight: best ? 700 : 600, fontSize: 12, minWidth: 54, textAlign: "right" }}>{acc.toFixed(2)}%</span>
+      <span style={{ color: "#888", fontSize: 11, minWidth: 52, textAlign: "right" }}>{n}/482</span>
+    </div>
+  );
+}
+
+function FusionPanel() {
+  return (
+    <section style={{ padding: "8px 16px", borderTop: "1px solid #252525", flexShrink: 0 }}>
+      <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 6 }}>
+        fusion · no-dsn · test 482
+      </div>
+      {FUSION_MODELS.map((m) => <FusionRow key={m.name} {...m} />)}
+      <div style={{ borderTop: "1px dashed #2a2a2a", margin: "5px 0" }} />
+      {FUSION_BLENDS.map((b) => <FusionRow key={b.name} {...b} />)}
+      <div style={{ fontSize: 9, color: "#5a5a5a", marginTop: 5 }}>solo / blended log-prob · ★ best blend</div>
+    </section>
   );
 }
 
@@ -279,12 +261,7 @@ export default function AnemonPage() {
         })()}
       </section>
 
-      {status?.leaderboard?.["Top combo per fusion width (with DSN)"]?.[0] && (
-        <section style={{ padding: "8px 16px", borderTop: "1px solid #252525", flexShrink: 0 }}>
-          <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 6 }}>top by fusion width</div>
-          <CompactTable rows={status.leaderboard["Top combo per fusion width (with DSN)"][0]} />
-        </section>
-      )}
+      <FusionPanel />
     </main>
   );
 }
