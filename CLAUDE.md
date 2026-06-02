@@ -13,7 +13,7 @@ Always start a session first. This keeps a kernel alive so every command is fast
 jlab session start
 
 # Change session working directory (persists across exec calls)
-jlab session cd /notebooks/Anemon
+jlab session cd /notebooks/Manta
 
 # Check session / Stop when done
 jlab session status
@@ -26,10 +26,10 @@ jlab session stop
 
 ```bash
 # GOOD — one tool call for 3 commands:
-jlab exec "ls /notebooks/Anemon" "cat README.md" "wc -l *.py"
+jlab exec "ls /notebooks/Manta" "cat README.md" "wc -l *.py"
 
 # BAD — 3 separate tool calls:
-jlab exec "ls /notebooks/Anemon"
+jlab exec "ls /notebooks/Manta"
 jlab exec "cat README.md"
 jlab exec "wc -l *.py"
 ```
@@ -44,14 +44,14 @@ jlab run "import torch" "print(torch.cuda.is_available())" "print(torch.__versio
 ```bash
 # Shell commands (batch multiple for efficiency)
 jlab exec "cmd1" "cmd2" "cmd3"
-jlab exec --cwd /notebooks/Anemon "python train.py"
+jlab exec --cwd /notebooks/Manta "python train.py"
 
 # Browse remote files (REST API, no kernel needed)
 jlab ls [path]
 jlab cat path/to/file
 
 # Find files
-jlab find "*.py" --path /notebooks/Anemon
+jlab find "*.py" --path /notebooks/Manta
 
 # Transfer files
 jlab download Anemon/model.py
