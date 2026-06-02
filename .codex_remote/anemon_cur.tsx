@@ -672,8 +672,16 @@ export default function AnemonPage() {
           const hasAux = tableRows.some(e => e.aux_loss != null);
           const refs = status?.available_refs ?? [];
           const activeRef = (selectedRef ? refs.find(r => r.name === selectedRef) : null) ?? refs[0] ?? null;
-          const refMap = new Map((activeRef?.epochs ?? []).map(p => [p.ep, p.te] as [number, number]));
-          const showRef = (activeRef?.epochs?.length ?? 0) > 0;
+          const refEps = (activeRef?.epochs ?? []).slice().sort((a, b) => a.ep - b.ep);
+          const showRef = refEps.length > 0;
+          // "ref as of this epoch": last ref eval at-or-before the current epoch
+          // (forward-fill), so refs on a different/sparser eval schedule still show.
+          const refAt = (ep: number): number | null => {
+            if (!refEps.length) return null;
+            let v = refEps[0].te;
+            for (const p of refEps) { if (p.ep <= ep) v = p.te; else break; }
+            return v;
+          };
           const headers = [
             "ep", "tr%", "loss",
             ...(hasAux ? ["aux"] : []),
@@ -715,7 +723,7 @@ export default function AnemonPage() {
                     const baseColor = isBest ? "#6f9" : "#e8e8e8";
                     const weight = isBest ? 700 : 400;
                     const gap = e.tr_acc != null && e.te_p1 != null ? e.tr_acc - e.te_p1 : null;
-                    const refTe = refMap.get(e.ep);
+                    const refTe = refAt(e.ep);
                     const dRef = (refTe != null && e.te_p1 != null) ? e.te_p1 - refTe : null;
                     const cells: { v: string; color: string }[] = [
                       { v: String(e.ep), color: baseColor },
