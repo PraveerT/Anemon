@@ -17,6 +17,10 @@ htmlcov/
 remote-viz/
 viz-qcc/
 
+# scratch / remote-codex working dir + local Claude tooling (not for the repo)
+.codex_remote/
+.claude/
+
 # model checkpoints and experiment artifacts
 *.pt
 *.pth
