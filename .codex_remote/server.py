@@ -39,6 +39,9 @@ def parse_log(path):
     ta = None
     tl = None
     al = None
+    aux_acc = None
+    aux_te = None
+    skew_traj = []
     cur_lr = None
     best = None
     try:
@@ -54,7 +57,11 @@ def parse_log(path):
                 if m: cur_ep = int(m.group(1))
                 m = re.search(r'lr:\s*(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)', line)
                 if m: cur_lr = float(m.group(1))
+                m = re.search(r'lr=(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)', line)
+                if m: cur_lr = float(m.group(1))
                 m = re.search(r'(\d+)/(\d+) \[', line)
+                if m: cur_batch = f"{m.group(1)}/{m.group(2)}"
+                m = re.search(r'Batch\((\d+)/(\d+)\)', line)
                 if m: cur_batch = f"{m.group(1)}/{m.group(2)}"
                 m = re.search(r'Epoch (\d+), Test, Evaluation: prec1 (\d+(?:\.\d+)?), prec5 (\d+(?:\.\d+)?)', line)
                 if m:
@@ -63,7 +70,7 @@ def parse_log(path):
                     p5 = float(m.group(3))
                     row = {
                         'ep': ep, 'tr_acc': ta, 'tr_loss': tl,
-                        'aux_loss': al,
+                        'aux_loss': al, 'aux_acc': aux_acc, 'aux_te': aux_te,
                         'te_p1': round(p1, 2), 'te_p5': round(p5, 2),
                     }
                     # Same epoch logged twice (stdout + file logger): replace
@@ -74,9 +81,31 @@ def parse_log(path):
                         epochs.append(row)
                     if best is None or p1 > best['p1']:
                         best = {'ep': ep, 'p1': round(p1, 2)}
+                # --- skew-auxce hooks (model.log_hooks + main.py aux metrics) ---
+                m = re.search(r'Mean auxiliary acc:\s+(\d+(?:\.\d+)?)', line)
+                if m:
+                    aux_acc = float(m.group(1))
+                m = re.search(r'Aux test acc:\s+(\d+(?:\.\d+)?)', line)
+                if m:
+                    aux_te = float(m.group(1))
+                m = re.search(
+                    r'skew_hook scale=([-\d.eE+]+) wu=([-\d.eE+]+) wv=([-\d.eE+]+) '
+                    r'head0=([-\d.eE+]+) headf=([-\d.eE+]+) desc_e=([-\d.eE+]+) '
+                    r'lag1=([-\d.eE+]+) lag2=([-\d.eE+]+)', line)
+                if m and cur_ep is not None:
+                    skew_traj.append({
+                        'ep': cur_ep,
+                        'scale': float(m.group(1)), 'wu': float(m.group(2)),
+                        'wv': float(m.group(3)), 'head0': float(m.group(4)),
+                        'headf': float(m.group(5)), 'desc_e': float(m.group(6)),
+                        'lag1': float(m.group(7)), 'lag2': float(m.group(8)),
+                        'aux_acc': aux_acc, 'aux_te': aux_te,
+                    })
     except FileNotFoundError:
         pass
-    return {'epochs': epochs[-40:], 'best': best, 'now': {'ep': cur_ep, 'batch': cur_batch, 'lr': cur_lr}}
+    return {'epochs': epochs[-40:], 'best': best,
+            'now': {'ep': cur_ep, 'batch': cur_batch, 'lr': cur_lr},
+            'skew_traj': skew_traj[-80:]}
 
 
 def gpu_stats():
@@ -295,7 +324,7 @@ def available_refs(exclude_run=None):
     """Scan work_dir for directories with Test_confusion_mat.npy; return their
     per-class breakdowns so the client can pick which to compare against.
 
-    exclude_run: directory path (basename matched) to skip — used to drop the
+    exclude_run: directory path (basename matched) to skip ï¿½ used to drop the
     currently-tracked run from the list of comparison targets.
     """
     if not os.path.isdir(_WORK_DIR):
@@ -338,16 +367,52 @@ def current_perclass(run_dir):
         return None
 
 
-_FUSION_CACHE = os.path.join(HERE, 'state', 'fusion_cache.json')
-
-
-def fusion_cache():
-    """Latest fusion result written by the fusion watcher background process."""
-    if not os.path.isfile(_FUSION_CACHE):
-        return None
+def skew_stats(run_dir):
+    """Skew-TCC aux anatomy from the latest ckpt: scale, projector/head norms,
+    per-cov-component energy (xx yy zz xy xz yz), per-rank usage, per-lag
+    classifier energy, and whether the aux is alive (scale*head0 > eps).
+    Works for the self-destructing skew-raw head AND the auxce (fixed-scale) variant."""
     try:
-        with open(_FUSION_CACHE) as f:
-            return json.load(f)
+        import numpy as np
+        ep, sd = _load_latest_sd(run_dir)
+        if sd is None or 'skew_head_scale' not in sd:
+            return None
+
+        def t(k):
+            v = sd.get(k)
+            return v.numpy() if v is not None and hasattr(v, 'numpy') else None
+
+        sc = sd['skew_head_scale']
+        scale = float(sc.item() if hasattr(sc, 'item') else sc)
+        Wu, Wv = t('Wu.weight'), t('Wv.weight')
+        H0, Hf = t('skew_head.0.weight'), t('skew_head.3.weight')
+        out = {'epoch': ep, 'scale': scale}
+        if Wu is not None: out['wu'] = float(np.linalg.norm(Wu))
+        if Wv is not None: out['wv'] = float(np.linalg.norm(Wv))
+        if H0 is not None: out['head0'] = float(np.linalg.norm(H0))
+        if Hf is not None: out['headf'] = float(np.linalg.norm(Hf))
+        out['alive'] = bool(abs(scale) * out.get('head0', 0.0) > 1e-3)
+        if Wu is not None:
+            uniq = {'xx': [0], 'yy': [4], 'zz': [8], 'xy': [1, 3], 'xz': [2, 6], 'yz': [5, 7]}
+            W = np.abs(np.vstack([Wu, Wv])) if Wv is not None else np.abs(Wu)
+            e = {k: float(np.sqrt((W[:, idx] ** 2).sum())) for k, idx in uniq.items()}
+            tot = sum(e.values()) or 1.0
+            out['comp_energy'] = {k: round(100 * v / tot, 1) for k, v in e.items()}
+        if H0 is not None:
+            r = Wu.shape[0] if Wu is not None else 12
+            npairs = r * (r - 1) // 2
+            coln = np.linalg.norm(H0, axis=0)
+            nlag = max(1, coln.shape[0] // npairs)
+            out['lag_energy'] = [round(float(coln[i * npairs:(i + 1) * npairs].sum()), 3) for i in range(nlag)]
+            ti = np.tril_indices(r, -1)
+            usage = np.zeros(r)
+            for d in range(coln.shape[0]):
+                k = d % npairs
+                usage[ti[0][k]] += coln[d]
+                usage[ti[1][k]] += coln[d]
+            us = usage.sum() or 1.0
+            out['rank_usage'] = [round(float(100 * x / us), 1) for x in usage]
+        return out
     except Exception:
         return None
 
@@ -371,8 +436,9 @@ def reference_baselines(parsed):
     return {
         'current_best': round(best, 2),
         'refs': [
-            {'name': 'v2 k6', 'value': _V2_K6_BEST, 'delta': round(best - _V2_K6_BEST, 2)},
-            {'name': 'cnxxlquat', 'value': 91.08, 'delta': round(best - 91.08, 2)},
+            {'name': 'skew-tcc', 'value': 91.91, 'delta': round(best - 91.91, 2)},
+            {'name': 'quat-head', 'value': 91.29, 'delta': round(best - 91.29, 2)},
+            {'name': 'no-aux floor', 'value': 89.83, 'delta': round(best - 89.83, 2)},
         ],
     }
 
@@ -447,7 +513,7 @@ def build_status():
         'refs': reference_baselines(parsed),
         'available_refs': available_refs(exclude_run=run_dir),
         'current_perclass': current_perclass(run_dir),
-        'fusion': fusion_cache(),
+        'skew': skew_stats(run_dir),
         **parsed,
     }
 
