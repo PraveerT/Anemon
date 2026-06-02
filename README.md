@@ -76,3 +76,9 @@ jlab connects to JupyterLab's REST API and WebSocket kernel protocol:
 - [websocket-client](https://websocket-client.readthedocs.io/) - Kernel WebSocket communication
 - [rich](https://rich.readthedocs.io/) - Terminal formatting
 - [prompt_toolkit](https://python-prompt-toolkit.readthedocs.io/) - Input with tab completion
+
+## Research
+
+This tool was built to run our point-cloud gesture-recognition research on NVGesture.
+The research itself — results, training code, and findings — lives in the separate
+**[Manta](https://github.com/PraveerT/Manta)** repo.
