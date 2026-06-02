@@ -302,7 +302,12 @@ def param_counts(run_dir):
 
 _WORK_DIR = '/notebooks/Anemon/experiments/work_dir'
 _REF_LABELS = {
-    'cn_xxl_quat_head': 'cnxxlquat 91.08',
+    'cn_xxl_quat_head': 'quat-head 91.29',
+    'cn_skewrawhead_skew': 'skew-tcc 91.91',
+    'cn_skewraw_off': 'no-aux 89.83',
+    'cn_skewraw_sym': 'sym 89.21',
+    'cn_skew_auxce': 'auxce no-LN (dead)',
+    'cn_skew_auxce_ln': 'auxce+LN (live)',
     'cn_xxl_quat_head_stqnet_c1_gumbel': 'k6 gumbel (ep126) 90.66',
 }
 
@@ -359,6 +364,9 @@ def available_refs(exclude_run=None):
         cm = os.path.join(p, 'Test_confusion_mat.npy')
         if not os.path.isfile(cm): continue
         try:
+            traj = _ref_epoch_traj(p)
+            if not traj or len(traj) < 2:
+                continue   # skip single-point eval dumps (e.g. *_eval re-evals -> flat line)
             pc = _perclass_from_cm(cm)
             tot = sum(t for _, _, t in pc)
             cor = sum(t - w for _, w, t in pc)
@@ -367,7 +375,7 @@ def available_refs(exclude_run=None):
                 'label': _REF_LABELS.get(d, d),
                 'acc': round(100.0 * cor / max(tot, 1), 2),
                 'perclass': [{'cls': c, 'wrong': w, 'total': t} for c, w, t in pc],
-                'epochs': _ref_epoch_traj(p),
+                'epochs': traj,
             })
         except Exception:
             continue
