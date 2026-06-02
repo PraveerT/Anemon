@@ -32,6 +32,7 @@ jlab shell
 | `jlab ls [path]` | List remote files and directories |
 | `jlab cat <path>` | View file contents with syntax highlighting |
 | `jlab upload <local> <remote>` | Upload a file to the server |
+| `jlab write <remote> [-c <text>]` | Write text directly to a remote file (content from `-c` or stdin) |
 | `jlab download <remote> [local]` | Download a file from the server |
 | `jlab rm <path>` | Delete a remote file |
 | `jlab kernels` | List running kernels |

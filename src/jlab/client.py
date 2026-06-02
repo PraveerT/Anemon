@@ -112,6 +112,12 @@ class JupyterClient:
         resp = self._request("PUT", f"contents/{remote_path}", json=body)
         return self._parse_content_item(resp.json())
 
+    def write_text(self, remote_path: str, text: str) -> ContentItem:
+        """Write text directly to a remote file (no local file needed)."""
+        body = {"content": text, "format": "text", "type": "file"}
+        resp = self._request("PUT", f"contents/{remote_path}", json=body)
+        return self._parse_content_item(resp.json())
+
     def download_file(self, remote_path: str) -> tuple[str | bytes, str]:
         resp = self._request("GET", f"contents/{remote_path}", params={"content": 1})
         data = resp.json()

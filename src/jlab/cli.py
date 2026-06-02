@@ -303,6 +303,23 @@ def upload(local: str, remote: str):
 
 @main.command()
 @click.argument("remote")
+@click.option("--content", "-c", default=None, help="Content to write (default: read from stdin)")
+@handle_errors
+def write(remote: str, content: str | None):
+    """Write text directly to a remote file (content from --content or stdin)."""
+    remote = _fix_remote_path(remote)
+    if remote.startswith("/notebooks/"):
+        remote = remote[len("/notebooks/"):]
+    remote = remote.lstrip("/")
+    if content is None:
+        content = sys.stdin.read()
+    client = get_client()
+    result = client.write_text(remote, content)
+    display.print_success(f"Wrote {len(content)} chars -> {result.path}")
+
+
+@main.command()
+@click.argument("remote")
 @click.argument("local", required=False)
 @handle_errors
 def download(remote: str, local: str | None):
