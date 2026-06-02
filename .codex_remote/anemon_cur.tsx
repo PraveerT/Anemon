@@ -81,6 +81,7 @@ type Status = {
     label: string;
     acc: number;
     perclass: { cls: number; wrong: number; total: number }[];
+    epochs?: { ep: number; te: number }[];
   }[] | null;
   current_perclass?: { cls: number; wrong: number; total: number }[] | null;
   skew?: SkewStats | null;
@@ -669,58 +670,87 @@ export default function AnemonPage() {
       <section style={{ padding: "8px 16px", borderTop: "1px solid #252525", flex: detailed ? "0 0 auto" : 1, minHeight: 0, overflow: detailed ? "visible" : "hidden", display: "flex", flexDirection: "column" }}>
         {(() => {
           const hasAux = tableRows.some(e => e.aux_loss != null);
-          const baseHeaders = hasAux
-            ? ["ep", "tr%", "loss", "aux", "te p1", "te p5"]
-            : ["ep", "tr%", "loss", "te p1", "te p5"];
-          const headers = detailed ? [...baseHeaders, "gap"] : baseHeaders;
+          const refs = status?.available_refs ?? [];
+          const activeRef = (selectedRef ? refs.find(r => r.name === selectedRef) : null) ?? refs[0] ?? null;
+          const refMap = new Map((activeRef?.epochs ?? []).map(p => [p.ep, p.te] as [number, number]));
+          const showRef = (activeRef?.epochs?.length ?? 0) > 0;
+          const headers = [
+            "ep", "tr%", "loss",
+            ...(hasAux ? ["aux"] : []),
+            "te p1",
+            ...(showRef ? ["ref", "Δ"] : []),
+            "te p5",
+            ...(detailed ? ["gap"] : []),
+          ];
           const fmtAux = (v: number | null | undefined) =>
             v == null || Number.isNaN(v) ? "—" : Number(v).toExponential(1);
           return (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  {headers.map((h, i) => (
-                    <th key={h} style={{
-                      padding: "4px 6px",
-                      textAlign: i === 0 ? "left" : "right",
-                      color: "#888",
-                      fontWeight: 500,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.4px",
-                      fontSize: 10,
-                      borderBottom: "1px solid #252525",
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((e) => {
-                  const isBest = e.ep === bestEp;
-                  const color = isBest ? "#6f9" : "#e8e8e8";
-                  const weight = isBest ? 700 : 400;
-                  const gap = e.tr_acc != null && e.te_p1 != null ? e.tr_acc - e.te_p1 : null;
-                  const baseCells = hasAux
-                    ? [String(e.ep), fmt(e.tr_acc, 1), fmt(e.tr_loss, 3), fmtAux(e.aux_loss), fmt(e.te_p1, 2), fmt(e.te_p5, 2)]
-                    : [String(e.ep), fmt(e.tr_acc, 1), fmt(e.tr_loss, 3), fmt(e.te_p1, 2), fmt(e.te_p5, 2)];
-                  const cells = detailed ? [...baseCells, gap != null ? gap.toFixed(2) : "—"] : baseCells;
-                  return (
-                    <tr key={e.ep}>
-                      {cells.map((v, i) => {
-                        const isGap = detailed && i === cells.length - 1 && gap != null;
-                        const gapColor = isGap && gap! > 10 ? "#fb6" : isGap && gap! > 5 ? "#fc9" : color;
-                        return (
+            <>
+              {showRef && (
+                <div style={{ fontSize: 9.5, color: "#888", marginBottom: 4 }}>
+                  ref = <span style={{ color: "#7aa2c0" }}>{activeRef!.label}</span>
+                  <span style={{ color: "#555" }}> · Δ = current − ref (per epoch)</span>
+                </div>
+              )}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    {headers.map((h, i) => (
+                      <th key={h} style={{
+                        padding: "4px 6px",
+                        textAlign: i === 0 ? "left" : "right",
+                        color: "#888",
+                        fontWeight: 500,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.4px",
+                        fontSize: 10,
+                        borderBottom: "1px solid #252525",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map((e) => {
+                    const isBest = e.ep === bestEp;
+                    const baseColor = isBest ? "#6f9" : "#e8e8e8";
+                    const weight = isBest ? 700 : 400;
+                    const gap = e.tr_acc != null && e.te_p1 != null ? e.tr_acc - e.te_p1 : null;
+                    const refTe = refMap.get(e.ep);
+                    const dRef = (refTe != null && e.te_p1 != null) ? e.te_p1 - refTe : null;
+                    const cells: { v: string; color: string }[] = [
+                      { v: String(e.ep), color: baseColor },
+                      { v: fmt(e.tr_acc, 1), color: baseColor },
+                      { v: fmt(e.tr_loss, 3), color: baseColor },
+                      ...(hasAux ? [{ v: fmtAux(e.aux_loss), color: baseColor }] : []),
+                      { v: fmt(e.te_p1, 2), color: baseColor },
+                      ...(showRef ? [
+                        { v: refTe != null ? refTe.toFixed(2) : "—", color: "#7aa2c0" },
+                        {
+                          v: dRef != null ? `${dRef > 0 ? "+" : ""}${dRef.toFixed(2)}` : "—",
+                          color: dRef == null ? "#666" : dRef > 0 ? "#6f9" : dRef < 0 ? "#f88" : "#bbb",
+                        },
+                      ] : []),
+                      { v: fmt(e.te_p5, 2), color: baseColor },
+                      ...(detailed ? [{
+                        v: gap != null ? gap.toFixed(2) : "—",
+                        color: (gap != null && gap > 10) ? "#fb6" : (gap != null && gap > 5) ? "#fc9" : baseColor,
+                      }] : []),
+                    ];
+                    return (
+                      <tr key={e.ep}>
+                        {cells.map((c, i) => (
                           <td key={i} style={{
                             padding: "4px 6px",
                             textAlign: i === 0 ? "left" : "right",
-                            color: gapColor, fontWeight: weight,
-                          }}>{v}</td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            color: c.color, fontWeight: weight,
+                          }}>{c.v}</td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
           );
         })()}
       </section>

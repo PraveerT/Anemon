@@ -320,6 +320,26 @@ def _perclass_from_cm(path):
     return out
 
 
+def _ref_epoch_traj(ref_dir):
+    """Per-epoch test acc for a ref run, parsed from its log (log.txt / *.log)."""
+    import glob
+    import re as _re
+    logs = glob.glob(os.path.join(ref_dir, 'log.txt')) + glob.glob(os.path.join(ref_dir, '*.log'))
+    if not logs:
+        return None
+    path = max(logs, key=os.path.getsize)
+    acc = {}
+    try:
+        with open(path, errors='replace') as f:
+            for line in f:
+                m = _re.search(r'Epoch (\d+), Test, Evaluation: prec1 (\d+(?:\.\d+)?)', line)
+                if m:
+                    acc[int(m.group(1))] = float(m.group(2))
+    except Exception:
+        return None
+    return [{'ep': e, 'te': round(v, 2)} for e, v in sorted(acc.items())] or None
+
+
 def available_refs(exclude_run=None):
     """Scan work_dir for directories with Test_confusion_mat.npy; return their
     per-class breakdowns so the client can pick which to compare against.
@@ -347,6 +367,7 @@ def available_refs(exclude_run=None):
                 'label': _REF_LABELS.get(d, d),
                 'acc': round(100.0 * cor / max(tot, 1), 2),
                 'perclass': [{'cls': c, 'wrong': w, 'total': t} for c, w, t in pc],
+                'epochs': _ref_epoch_traj(p),
             })
         except Exception:
             continue
