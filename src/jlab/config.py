@@ -14,6 +14,7 @@ class JlabConfig:
     url: str
     token: str
     default_kernel: str = "python3"
+    default_cwd: str = "/notebooks"   # session start cd's here; set per-project in ~/.jlab/config.json
 
     @property
     def api_url(self) -> str:

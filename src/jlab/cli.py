@@ -184,22 +184,26 @@ def _setup_session(config, client):
     conn = KernelConnection(config, kernel_info.id)
     conn.connect()
     conn.execute("import subprocess, os", timeout=10)
-    cwd = "/notebooks/PMamba"
+    cwd = config.default_cwd
     conn.execute(f"os.chdir({cwd!r})", timeout=10)
     conn.close()
 
     save_session(kernel_info.id, cwd)
     display.print_success(f"Session started (kernel: {kernel_info.id[:12]}..., cwd: {cwd})")
 
-    # Run startup script
-    display.print_info("Running startup.sh...")
+    # Run startup script if the project dir has one (skip silently otherwise)
+    display.print_info("Running startup.sh (if present)...")
     conn = KernelConnection(config, kernel_info.id)
     conn.connect()
     code = (
-        "import subprocess as _sp\n"
-        "_r = _sp.run('bash ./startup.sh', shell=True, capture_output=True, text=True, cwd='/notebooks/PMamba')\n"
-        "if _r.stdout: print(_r.stdout, end='')\n"
-        "if _r.stderr: print(_r.stderr, end='')"
+        "import subprocess as _sp, os as _os\n"
+        f"_d = {cwd!r}\n"
+        "if _os.path.isfile(_os.path.join(_d, 'startup.sh')):\n"
+        "    _r = _sp.run('bash ./startup.sh', shell=True, capture_output=True, text=True, cwd=_d)\n"
+        "    print(_r.stdout, end='')\n"
+        "    print(_r.stderr, end='')\n"
+        "else:\n"
+        "    print('__NO_STARTUP__ (no startup.sh in ' + _d + ')')"
     )
     result = conn.execute_streaming(code, timeout=600)
     conn.close()
@@ -447,12 +451,14 @@ def session():
 
 @session.command("start")
 @click.option("--kernel", "-k", default=None, help="Kernel name to use")
-@click.option("--cwd", default="/notebooks", help="Initial working directory")
+@click.option("--cwd", default=None, help="Initial working directory (default: config default_cwd)")
 @handle_errors
-def session_start(kernel: str | None, cwd: str):
+def session_start(kernel: str | None, cwd: str | None):
     """Start a persistent kernel session."""
-    cwd = _fix_remote_path(cwd)
     config = load_config()
+    if cwd is None:
+        cwd = config.default_cwd
+    cwd = _fix_remote_path(cwd)
     client = JupyterClient(config)
 
     # Check if a session already exists
