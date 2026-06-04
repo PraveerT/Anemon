@@ -4,6 +4,21 @@
 
 This project includes `jlab`, a CLI for interacting with a remote JupyterLab GPU server (Paperspace Gradient).
 
+## ALWAYS use the REST API — the kernel is unreliable (IMPORTANT)
+
+The Paperspace container is flaky: it 503-bounces, hangs, and dies mid-run. Default to REST and never block on the kernel:
+
+- **Reads / status / file transfer → REST only:** `jlab ls`, `jlab cat`, `jlab download`, `jlab upload`. These hit the Jupyter REST API and work even when the kernel is dead.
+- **Never block on `jlab exec` for output.** Launch every long job DETACHED and poll the result file over REST:
+  ```bash
+  jlab exec --cwd <dir> "nohup python -u main.py --config X.yaml > run.log 2>&1 & echo LAUNCHED \$!"
+  # then, kernel-independent:
+  jlab cat <work_dir>/log.txt
+  ```
+  Read the clean recoder log (`work_dir/.../log.txt`) — NOT the raw stdout `.log`, whose tqdm bars contain Unicode (`▏`) that crashes the Windows console codec.
+- **On 503 / 500 / Service Unavailable / hang → run `jlab setup` immediately** (re-provisions the container). A 503 is usually a container bounce that kills nohup jobs: after recovery, check `ps`/checkpoints and relaunch any killed training. The box comes back on a NEW URL; the persistent `/notebooks` filesystem (code, logs, checkpoints) survives, running processes do not.
+- The fetcher (sidepanel publisher) dies on every bounce — restart it after recovery.
+
 ## Session Workflow (IMPORTANT)
 
 Always start a session first. This keeps a kernel alive so every command is fast (~1s instead of ~5s):
