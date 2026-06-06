@@ -9,7 +9,9 @@ lean 1.06M base. Tests whether the buffered-delta recurrence beats the
 per-frame MLP bottleneck (lean baseline last-50 88.04).
 """
 from models.pgcnet_pruned import PGCNetPruned
-from models.motion_bdn_q import BDeltaQTemporalEncoder
+# vectorized BDN-Q (windowed attention parallelized; verified numerically
+# identical to the naive scan, maxdiff ~1e-6). Same params -> checkpoints load.
+from models.motion_bdn_q_vec import BDeltaQTemporalEncoder
 
 
 class PGCNetBDNQ(PGCNetPruned):
