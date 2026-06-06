@@ -32,7 +32,7 @@ if [ -f "$EXP/.active_run" ]; then
   elif [ "$RUN" = "logitnorm" ]; then
     ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup bash run_logitnorm.sh > work_dir/logitnorm_driver.out 2>&1 & )
     echo "[startup] auto-resumed logitnorm sweep"
-  elif [ "$RUN" = "pgcnet_bdnq" ] || [ "$RUN" = "pgcnet_bdnq_vec" ] || [ "$RUN" = "pgcnet_skewlean" ]; then
+  elif [ "$RUN" = "pgcnet_bdnq" ] || [ "$RUN" = "pgcnet_bdnq_vec" ] || [ "$RUN" = "pgcnet_skewlean" ] || [ "$RUN" = "pgcnet_gridt2s" ]; then
     ( cd "$EXP" && python _resume_run.py "$RUN"; DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup python main.py --config "${RUN}_resume.yaml" > "work_dir/${RUN}.out" 2>&1 & )
     echo "[startup] auto-resumed bdnq ($RUN, fast)"
   elif [ "$RUN" = "seeds_p32" ]; then
