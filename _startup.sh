@@ -29,6 +29,9 @@ if [ -f "$EXP/.active_run" ]; then
   elif [ "$RUN" = "cyclezoo" ]; then
     ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup bash run_cyclezoo.sh > work_dir/cyclezoo_driver.out 2>&1 & )
     echo "[startup] auto-resumed cyclezoo chain"
+  elif [ "$RUN" = "logitnorm" ]; then
+    ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup bash run_logitnorm.sh > work_dir/logitnorm_driver.out 2>&1 & )
+    echo "[startup] auto-resumed logitnorm sweep"
   elif [ "$RUN" = "pgcnet_bdnq" ] || [ "$RUN" = "pgcnet_bdnq_vec" ] || [ "$RUN" = "pgcnet_skewlean" ]; then
     ( cd "$EXP" && python _resume_run.py "$RUN"; DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup python main.py --config "${RUN}_resume.yaml" > "work_dir/${RUN}.out" 2>&1 & )
     echo "[startup] auto-resumed bdnq ($RUN, fast)"
