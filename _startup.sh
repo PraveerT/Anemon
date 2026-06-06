@@ -32,6 +32,9 @@ if [ -f "$EXP/.active_run" ]; then
   elif [ "$RUN" = "logitnorm" ]; then
     ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup bash run_logitnorm.sh > work_dir/logitnorm_driver.out 2>&1 & )
     echo "[startup] auto-resumed logitnorm sweep"
+  elif [ "$RUN" = "skewscratch" ]; then
+    ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 nohup bash run_skewscratch.sh > work_dir/skewscratch_driver.out 2>&1 & )
+    echo "[startup] auto-resumed skew-scratch seed sweep (deterministic)"
   elif [ "$RUN" = "pgcnet_bdnq" ] || [ "$RUN" = "pgcnet_bdnq_vec" ] || [ "$RUN" = "pgcnet_skewlean" ] || [ "$RUN" = "pgcnet_gridt2s" ]; then
     ( cd "$EXP" && python _resume_run.py "$RUN"; DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup python main.py --config "${RUN}_resume.yaml" > "work_dir/${RUN}.out" 2>&1 & )
     echo "[startup] auto-resumed bdnq ($RUN, fast)"
@@ -41,6 +44,15 @@ if [ -f "$EXP/.active_run" ]; then
   elif [ "$RUN" = "skew9191" ]; then
     ( cd /notebooks/wt9191/experiments && nohup bash run_skew9191.sh > work_dir/skew9191.out 2>&1 & )
     echo "[startup] auto-resumed skew9191 worktree run"
+  elif [ "$RUN" = "quat9191" ]; then
+    ( cd /notebooks/wt9191/experiments && python _resume_run.py cn_xxl_quat_s2; nohup python -u main.py --config cn_xxl_quat_s2_resume.yaml > work_dir/cn_xxl_quat_s2.out 2>&1 & )
+    echo "[startup] auto-resumed quat9191 worktree run s2 (non-det)"
+  elif [ "$RUN" = "quatzero" ]; then
+    ( cd /notebooks/wt9191/experiments && nohup bash run_quatzero.sh > work_dir/quatzero_driver.out 2>&1 & )
+    echo "[startup] auto-resumed quatzero control (non-det)"
+  elif [ "$RUN" = "noaux" ]; then
+    ( cd /notebooks/wt9191/experiments && nohup bash run_noaux.sh > work_dir/noaux_driver.out 2>&1 & )
+    echo "[startup] auto-resumed noaux baseline (non-det)"
   elif [ "$RUN" = "lean_seeds" ]; then
     ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 nohup bash run_lean_seeds.sh > work_dir/lean_seeds.out 2>&1 & )
     echo "[startup] auto-resumed lean seed sweep"

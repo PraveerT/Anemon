@@ -4,7 +4,7 @@ config: pgcnet_bdnq.yaml
 dataloader: nvidia_dataloader.NvidiaLoader
 device: 0
 dynamic_pts_size: true
-eval_interval: 1
+eval_interval: 10
 framesize: 32
 freeze: null
 ignore_weights: []
