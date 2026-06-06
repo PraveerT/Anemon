@@ -29,9 +29,9 @@ if [ -f "$EXP/.active_run" ]; then
   elif [ "$RUN" = "cyclezoo" ]; then
     ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup bash run_cyclezoo.sh > work_dir/cyclezoo_driver.out 2>&1 & )
     echo "[startup] auto-resumed cyclezoo chain"
-  elif [ "$RUN" = "pgcnet_bdnq" ]; then
-    ( cd "$EXP" && python _resume_run.py pgcnet_bdnq; DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup python main.py --config pgcnet_bdnq_resume.yaml > work_dir/pgcnet_bdnq.out 2>&1 & )
-    echo "[startup] auto-resumed bdnq (fast)"
+  elif [ "$RUN" = "pgcnet_bdnq" ] || [ "$RUN" = "pgcnet_bdnq_vec" ] || [ "$RUN" = "pgcnet_skewlean" ]; then
+    ( cd "$EXP" && python _resume_run.py "$RUN"; DENSE=0 GPU_RESIDENT=1 DETERMINISTIC=0 nohup python main.py --config "${RUN}_resume.yaml" > "work_dir/${RUN}.out" 2>&1 & )
+    echo "[startup] auto-resumed bdnq ($RUN, fast)"
   elif [ "$RUN" = "seeds_p32" ]; then
     ( cd "$EXP" && DENSE=0 GPU_RESIDENT=1 nohup bash run_seeds_p32.sh > work_dir/seeds_p32.out 2>&1 & )
     echo "[startup] auto-resumed seed sweep: $RUN"
