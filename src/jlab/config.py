@@ -107,18 +107,20 @@ PS_DEFAULT_CONTAINER = "nvcr.io/nvidia/pytorch:23.10-py3"
 
 
 PS_NOTEBOOK_ID = "nfjbqnsvpx"
+PS_MACHINE_TYPE = "Free-A6000"
+PS_SHUTDOWN_TIMEOUT_HOURS = "6"
 
 
 def ps_start_notebook(api_key: str) -> dict:
-    """Restart notebook nfjbqnsvpx with Free-A6000. Fails if unavailable."""
+    """Restart the configured Paperspace notebook on the free A6000 tier."""
     import requests
     resp = requests.post(
         f"{PS_LEGACY_API}/startNotebook",
         headers={"X-API-Key": api_key, "Content-Type": "application/json"},
         json={
             "notebookId": PS_NOTEBOOK_ID,
-            "machineType": "Free-A6000",
-            "shutdownTimeout": 6,
+            "machineType": PS_MACHINE_TYPE,
+            "shutdownTimeout": PS_SHUTDOWN_TIMEOUT_HOURS,
         },
         timeout=30,
     )
@@ -133,15 +135,21 @@ def ps_start_notebook(api_key: str) -> dict:
     }
 
 
-def ps_stop_notebook(api_key: str) -> None:
-    """Stop the running notebook."""
+def ps_stop_notebook(api_key: str, notebook_id: str | None = None) -> None:
+    """Stop a running notebook by ID."""
     import requests
-    nb = fetch_running_notebook(api_key)
-    if not nb:
-        return
-    requests.post(
-        f"{PS_LEGACY_API}/stopNotebook",
-        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
-        json={"notebookId": nb["id"]},
-        timeout=30,
-    ).raise_for_status()
+    if notebook_id is None:
+        nb = fetch_running_notebook(api_key)
+        if not nb:
+            return
+        notebook_id = nb["id"]
+    try:
+        resp = requests.post(
+            f"{PS_LEGACY_API}/stopNotebook",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            json={"notebookId": notebook_id},
+            timeout=(5, 15),
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise ConfigError(f"Paperspace stop request failed: {exc}") from exc

@@ -256,7 +256,26 @@ def stop():
         display.print_info("No running notebook to stop.")
         return
 
-    ps_stop_notebook(api_key)
+    try:
+        ps_stop_notebook(api_key, nb["id"])
+    except JlabError:
+        # Paperspace's legacy stop endpoint occasionally hangs. Terminating the
+        # notebook's Jupyter process makes PID 1 exit and releases the instance.
+        config = load_config()
+        client = JupyterClient(config)
+        kernel_info = client.start_kernel(config.default_kernel)
+        conn = KernelConnection(config, kernel_info.id)
+        try:
+            conn.connect()
+            conn.execute(
+                "import subprocess; subprocess.Popen("
+                "['bash', '-lc', 'sleep 2; kill -TERM $(pgrep -o -f jupyter-lab)'], "
+                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, "
+                "start_new_session=True)",
+                timeout=10,
+            )
+        finally:
+            conn.close()
     clear_session()
     display.print_success(f"Notebook stopped ({nb['name']})")
 

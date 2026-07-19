@@ -27,7 +27,11 @@ jlab shell
 | Command | Description |
 |---------|-------------|
 | `jlab connect <url> --token <t>` | Save connection to a JupyterLab server |
+| `jlab setup --key <key>` | Connect to the configured Paperspace notebook |
+| `jlab start` / `jlab stop` | Start or stop the configured Paperspace notebook |
 | `jlab shell` | Remote shell with tab completion and streaming output |
+| `jlab exec "<command>"` | Execute a shell command remotely |
+| `jlab session start` | Start a persistent remote kernel session |
 | `jlab status` | Show server status |
 | `jlab ls [path]` | List remote files and directories |
 | `jlab cat <path>` | View file contents with syntax highlighting |
@@ -39,6 +43,9 @@ jlab shell
 | `jlab run "<code>"` | Execute code on a remote kernel (one-shot) |
 | `jlab repl` | Interactive Python REPL on a remote kernel |
 | `jlab nb run <notebook>` | Run all cells of a remote notebook |
+
+The Paperspace start helper requests the `Free-A6000` machine type with a
+six-hour auto-shutdown timeout.
 
 ## Remote Shell
 
@@ -53,11 +60,10 @@ jlab shell
 
 ```
 remote:/notebooks$ ls
-PMamba  REQNN  paper  research  viz-qcc
-remote:/notebooks$ cd PMamba
-remote:/notebooks/PMamba$ ./startup.sh
-changed 5 packages in 930ms
-...
+project  shared-data
+remote:/notebooks$ cd project
+remote:/notebooks/project$ python train.py
+Starting training...
 ```
 
 ## How It Works
@@ -77,9 +83,3 @@ jlab connects to JupyterLab's REST API and WebSocket kernel protocol:
 - [websocket-client](https://websocket-client.readthedocs.io/) - Kernel WebSocket communication
 - [rich](https://rich.readthedocs.io/) - Terminal formatting
 - [prompt_toolkit](https://python-prompt-toolkit.readthedocs.io/) - Input with tab completion
-
-## Research
-
-This tool was built to run our point-cloud gesture-recognition research on NVGesture.
-The research itself — results, training code, and findings — lives in the separate
-**[Manta](https://github.com/PraveerT/Manta)** repo.
