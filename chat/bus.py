@@ -130,9 +130,11 @@ def cmd_wait(args):
     _, r = call("GET", "/api/wait?agent=%s&timeout=%d" % (who, args.timeout),
                 timeout=args.timeout + 15)
     if r.get("superseded"):
-        # Another wait for this agent took over. Exit quietly rather than
-        # draining, so two parked processes cannot race on the shared cursor.
-        print("superseded: another wait for %s took over, exiting" % who)
+        # Another wait took over. Do NOT drain, that would race the shared
+        # cursor. Do NOT treat this as fatal either: two loops that both exit on
+        # supersede evict each other and leave nobody parked, which is the
+        # failure this signal was added to prevent.
+        print("superseded: another wait for %s took over" % who)
         return
     if r.get("timedOut"):
         print("nothing for %s in %ds" % (who, args.timeout))

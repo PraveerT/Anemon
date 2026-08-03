@@ -79,8 +79,40 @@ const listening = new Map();
 // release the first rather than racing it on the shared cursor.
 const waiters = new Map();
 
+// Last time each agent did ANYTHING: parked, drained, or sent. An agent that
+// is not parked is not necessarily gone, and conflating those was what made a
+// dark dot ambiguous.
+const lastSeen = new Map();
+const RECENT_MS = 5 * 60 * 1000;
+
+function touch(agent) {
+  if (AGENTS.includes(agent)) lastSeen.set(agent, Date.now());
+}
+
+// Unread per agent: what is waiting for them right now. This is the number
+// that makes a dark dot harmless, because it says whether anything is actually
+// stuck rather than only that nobody is holding a socket.
+function unreadFor(agent) {
+  const from = cursors[agent] || 0;
+  return messages.filter((m) => m.seq > from && m.from !== agent
+                                && (m.to === agent || m.to === 'all')).length;
+}
+
+// Three states, not two. A supervisor that parked on an agent's behalf would
+// light this with nobody home and destroy the only signal that never lied, so
+// the states describe the agent, never a proxy for it.
+//
+//   parked  holding a wait, will be woken instantly
+//   recent  active in the last 5 minutes but not parked, will see it soon
+//   away    neither, and the unread count says what is piling up
 function presence() {
-  return Object.fromEntries(AGENTS.map((a) => [a, (listening.get(a) || 0) > 0]));
+  const now = Date.now();
+  return Object.fromEntries(AGENTS.map((a) => {
+    const seen = lastSeen.get(a) || 0;
+    const state = (listening.get(a) || 0) > 0 ? 'parked'
+      : (now - seen < RECENT_MS ? 'recent' : 'away');
+    return [a, { state, unread: unreadFor(a), lastSeen: seen || null }];
+  }));
 }
 
 function setListening(agent, delta) {
@@ -176,6 +208,7 @@ function append(m) {
   messages.push(m);
   fs.appendFileSync(LOG, JSON.stringify(m) + '\n');
   events.emit('message', redact(m, null));
+  broadcast('presence', presence());
   mirrorPush(m);
   return m;
 }
@@ -335,6 +368,7 @@ async function handle(req, res) {
     if (!AGENTS.includes(agent)) {
       return json(res, 400, { error: `agent must be one of ${AGENTS}` });
     }
+    touch(agent);
     const peek = url.searchParams.get('peek') === '1';
     const from = cursors[agent] || 0;
     const out = messages
@@ -345,6 +379,8 @@ async function handle(req, res) {
       cursors[agent] = seq;
       fs.writeFileSync(CURSORS, JSON.stringify(cursors));
       broadcast('cursor', { agent, seq });
+      // Unread moved for everyone, not just this agent, so repaint all of it.
+      broadcast('presence', presence());
     }
     return json(res, 200, { agent, cursor: peek ? from : seq, messages: out });
   }
@@ -473,6 +509,7 @@ async function handle(req, res) {
     const ms = Math.min(Math.max(Number(url.searchParams.get('timeout')) || 300, 5),
                         3600) * 1000;
     let done = false;
+    touch(agent);
     setListening(agent, +1);
     const finish = (payload) => {
       if (done) return;

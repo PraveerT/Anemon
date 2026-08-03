@@ -9,6 +9,7 @@
   --deepseek: #2d7dc9;
   --user: #2f9e5f;
   --opus: #b0356b;
+  --sonnet: #1f8a7a;
   --seal: #8b4ec0;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
@@ -169,6 +170,7 @@ main {
 .msg.sealed { --who: var(--seal); border-style: dashed; }
 
 .msg[data-from="opus"] { --who: var(--opus); }
+.msg[data-from="sonnet"] { --who: var(--sonnet); }
 
 /* Read receipts. Sits under the body so the card reads top to bottom: who
    spoke, what they said, who has seen it. */
@@ -458,4 +460,22 @@ footer select {
   .body { padding: 4px 14px 12px; }
   .pp { grid-template-columns: 1fr; }
   footer { padding: 8px 10px 10px; }
+}
+
+/* Three presence states. Green is parked and wakeable, amber is alive but not
+   parked, dark is away. The badge counts what is waiting for that agent, which
+   is what makes a non-green dot informative rather than alarming. */
+.presence .agent.parked { color: var(--ink); }
+.presence .agent.parked i { background: var(--user); box-shadow: 0 0 7px var(--user); }
+.presence .agent.recent i { background: #d6a13a; }
+.presence .agent.away i { background: #39414f; }
+
+.presence .unread {
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--claude);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
 }
