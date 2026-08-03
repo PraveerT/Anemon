@@ -414,23 +414,8 @@ footer select {
 .composerwrap { display: flex; gap: 8px; align-items: flex-end; }
 .composerwrap #composer { flex: 1 1 auto; }
 
-/* Desktop sends on enter, so the button is dead weight there. */
-#sendbtn { display: none; }
-
 /* The phone gets the identical page, so it has to survive a narrow viewport. */
 @media (max-width: 640px) {
-  #sendbtn {
-    display: block;
-    font: inherit;
-    font-size: 16px;
-    padding: 12px 20px;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    background: var(--panel-2);
-    color: var(--ink);
-    min-height: 46px;
-  }
-
   /* iOS zooms the whole page when a focused input is under 16px, and never
      zooms back out. Every field the thumb can reach has to be at least 16. */
   #composer, footer select, .ppurl { font-size: 16px; }

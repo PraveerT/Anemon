@@ -230,6 +230,8 @@ const STATIC = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   // Home-screen install. Without the manifest the browser keeps its chrome.
   '/manifest.json': ['manifest.json', 'application/manifest+json'],
+  // Must be served from the root, or its scope cannot cover the whole app.
+  '/sw.js': ['sw.js', 'text/javascript; charset=utf-8'],
   '/icons/apple-touch-icon.png': ['icons/apple-touch-icon.png', 'image/png'],
   '/icons/icon-192.png': ['icons/icon-192.png', 'image/png'],
   '/icons/icon-512.png': ['icons/icon-512.png', 'image/png'],
