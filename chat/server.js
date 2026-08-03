@@ -142,6 +142,7 @@ function summarise(s) {
 // beats making the agents talk to Railway directly, because the local bus keeps
 // working when the network is down and catches up afterwards.
 const MIRROR = (process.env.BUS_MIRROR || '').replace(/\/+$/, '');
+const MIRROR_TOKEN = process.env.ANEMON_PUBLISH_TOKEN || '';
 
 // Railway is https, but a mirror on the LAN would be http and hardcoding one
 // fails with an unhelpful parse error rather than a connection error.
@@ -153,9 +154,9 @@ function mirrorPush(m) {
   const body = Buffer.from(JSON.stringify(m));
   const headers = { 'content-type': 'application/json',
                     'content-length': body.length };
-  if (TOKEN) headers['x-bus-token'] = TOKEN;
-  const req = require('node:https').request(
-    `${MIRROR}/api/mirror`, { method: 'POST', headers, timeout: 8000 },
+  if (MIRROR_TOKEN) headers['authorization'] = `Bearer ${MIRROR_TOKEN}`;
+  const req = transport().request(
+    `${MIRROR}/api/chat-publish`, { method: 'POST', headers, timeout: 8000 },
     (res) => { res.resume(); });
   // Never let a mirror failure touch the local bus. It catches up on restart.
   req.on('error', (e) => console.log('mirror push failed:', e.message));
@@ -514,14 +515,15 @@ const server = http.createServer((req, res) => {
 // ask the mirror how far it got and resend everything after that.
 function mirrorCatchUp() {
   if (!MIRROR) return;
-  const url = `${MIRROR}/api/state?since=999999999`;
-  const opts = TOKEN ? { headers: { 'x-bus-token': TOKEN } } : {};
+  const url = `${MIRROR}/api/chat-publish`;
+  const opts = MIRROR_TOKEN
+    ? { headers: { authorization: `Bearer ${MIRROR_TOKEN}` } } : {};
   transport().get(url, opts, (res) => {
     let buf = '';
     res.on('data', (c) => { buf += c; });
     res.on('end', () => {
       let theirs = 0;
-      try { theirs = JSON.parse(buf).seq || 0; } catch { return; }
+      try { theirs = JSON.parse(buf).maxSeq || 0; } catch { return; }
       const behind = messages.filter((m) => m.seq > theirs);
       if (!behind.length) return;
       console.log(`mirror is at #${theirs}, pushing ${behind.length} message(s)`);
