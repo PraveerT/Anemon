@@ -1,0 +1,421 @@
+:root {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --line: #d7dde5;
+  --ink: #1c2430;
+  --dim: #5c6a7a;
+  --claude: #b06a2e;
+  --deepseek: #2d7dc9;
+  --user: #2f9e5f;
+  --opus: #b0356b;
+  --seal: #8b4ec0;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+}
+
+/* header ------------------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+
+header h1 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0;
+}
+
+/* Who is parked on /api/wait right now. Not a heartbeat: an agent is lit
+   exactly when the server can wake it. Dark means messages will sit unread. */
+.presence {
+  display: flex;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.presence .agent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+}
+
+.presence .agent i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c3ccd6;
+}
+
+.presence .agent.on { color: var(--ink); }
+
+.presence .agent.on i {
+  background: var(--user);
+  box-shadow: 0 0 7px var(--user);
+}
+
+/* Who is writing right now. The agent posts /api/typing when composing
+   starts; the server clears it on send or after a timeout. */
+.typing {
+  height: 0;
+  overflow: hidden;
+  transition: height 0.2s ease;
+  font-size: 12px;
+  color: var(--dim);
+}
+.typing.on {
+  height: 20px;
+  padding: 2px 4px 0;
+}
+.typing .bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.typing .dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--dim);
+  display: inline-block;
+  animation: typingblink 1.2s infinite;
+}
+.typing .dots i:nth-child(2) { animation-delay: 0.2s; }
+.typing .dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typingblink {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+nav { display: flex; gap: 4px; margin-left: auto; }
+
+nav button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+nav button:hover { color: var(--ink); border-color: #b8c2cf; }
+nav button.on { background: var(--panel-2); color: var(--ink); border-color: #b8c2cf; }
+
+#status {
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+#status.on { color: var(--user); background: #e3f4e8; }
+#status.off { color: #b44444; background: #fbe6e6; }
+
+/* feed --------------------------------------------------------------- */
+
+main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 18px 16px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.msg {
+  /* flex-shrink defaults to 1 in a column container, which squeezes tall cards
+     and clips them against overflow:hidden. Pin the height to the content. */
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--who);
+  border-radius: 8px;
+  background: var(--panel);
+  max-width: 940px;
+  width: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.msg[data-from="claude"] { --who: var(--claude); }
+.msg[data-from="deepseek"] { --who: var(--deepseek); }
+.msg[data-from="user"] { --who: var(--user); }
+.msg.sealed { --who: var(--seal); border-style: dashed; }
+
+.msg[data-from="opus"] { --who: var(--opus); }
+
+/* Read receipts. Sits under the body so the card reads top to bottom: who
+   spoke, what they said, who has seen it. */
+.receipts {
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .03em;
+  color: var(--dim);
+}
+
+.receipts.unread { opacity: .55; }
+
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+.meta .who { color: var(--who); font-weight: 600; }
+
+.meta .kind {
+  padding: 1px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.meta .seq { margin-left: auto; }
+
+/* The agent-written summary. This is what the human actually reads, so it gets
+   the weight and the body below it starts hidden. */
+.summary {
+  padding: 13px 18px 14px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.summary + .body {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.body { padding: 4px 18px 14px; }
+.body > :first-child { margin-top: 10px; }
+.body > :last-child { margin-bottom: 0; }
+
+/* Long messages collapse so the feed stays navigable. The fade plus the
+   full-width button are the affordance that says there is more below. */
+.body.clamped {
+  max-height: 560px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 76%, transparent 99%);
+  mask-image: linear-gradient(#000 76%, transparent 99%);
+}
+
+.more {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  letter-spacing: .04em;
+  padding: 6px;
+  cursor: pointer;
+  background: var(--panel-2);
+  color: var(--dim);
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.more:hover { color: var(--ink); background: #e4e9ef; }
+
+.locked {
+  padding: 16px 18px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.locked b { color: var(--seal); }
+
+/* markdown ----------------------------------------------------------- */
+
+.body h1, .body h2, .body h3 {
+  font-size: 14.5px;
+  margin: 18px 0 8px;
+  color: var(--ink);
+}
+
+.body h1 { font-size: 16px; }
+.body p { margin: 9px 0; }
+.body ul, .body ol { margin: 9px 0; padding-left: 22px; }
+.body li { margin: 3px 0; }
+.body strong { color: var(--ink); }
+.body hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+
+.body code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: #eef1f5;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.body pre {
+  background: #f2f4f8;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 11px 13px;
+  overflow-x: auto;
+  margin: 11px 0;
+}
+
+.body pre code { background: none; border: 0; padding: 0; font-size: 12.5px; }
+
+.tablewrap { overflow-x: auto; margin: 11px 0; }
+
+.body table { border-collapse: collapse; font-size: 13px; }
+.body th, .body td {
+  border: 1px solid var(--line);
+  padding: 5px 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+.body th { background: var(--panel-2); color: var(--ink); font-weight: 600; }
+
+/* composer ----------------------------------------------------------- */
+
+footer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 10px 16px 12px;
+}
+
+footer .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+footer select {
+  font: inherit;
+  font-size: 12px;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 7px;
+}
+
+.hint { margin-left: auto; font-size: 11px; color: var(--dim); }
+
+#composer {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+}
+
+#composer:focus { outline: none; border-color: #9db2c9; }
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb { background: #c3ccd6; border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* --- phone access ---------------------------------------------------- */
+
+#phonebtn {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+#phonebtn:hover { color: var(--ink); border-color: #8a97ab; }
+
+#phonepanel { flex: 0 0 auto; border-bottom: 1px solid var(--line); }
+
+.pp {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 10px;
+  align-items: center;
+}
+
+.pplab, .ppnote { grid-column: 1 / -1; }
+.pplab { font-size: 12px; color: var(--dim); }
+
+.ppurl {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  width: 100%;
+}
+
+.ppcopy {
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.ppnote { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+.ppnote code { font-family: var(--mono); font-size: 11px; }
+
+/* The phone gets the identical page, so it has to survive a narrow viewport. */
+@media (max-width: 640px) {
+  header { flex-wrap: wrap; gap: 8px 10px; }
+  nav { margin-left: 0; flex-wrap: wrap; }
+  main { padding: 12px 10px 20px; }
+  .msg { border-radius: 6px; }
+  .meta { flex-wrap: wrap; gap: 6px; }
+  .meta .seq { margin-left: 0; }
+  .summary { font-size: 15px; padding: 12px 14px; }
+  .body { padding: 4px 14px 12px; }
+  .pp { grid-template-columns: 1fr; }
+  footer { padding: 8px 10px 10px; }
+}

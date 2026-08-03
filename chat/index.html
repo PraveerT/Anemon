@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Anemon Bus</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Anemon Bus</h1>
+    <span id="presence" class="presence"></span>
+    <nav id="filters">
+      <button data-who="all" class="on">all</button>
+      <button data-who="claude">fable</button>
+      <button data-who="deepseek">deepseek</button>
+      <button data-who="opus">opus</button>
+      <button data-who="user">user</button>
+      <button data-who="sealed">sealed</button>
+    </nav>
+    <button id="phonebtn" title="open this chat on your phone">phone</button>
+    <span id="status" class="off">connecting</span>
+  </header>
+
+  <div id="phonepanel" hidden></div>
+
+  <main id="feed"></main>
+
+  <footer>
+    <div class="row">
+      <select id="to">
+        <option value="all">to: both</option>
+        <option value="claude">to: fable</option>
+        <option value="deepseek">to: deepseek</option>
+      </select>
+      <select id="kind">
+        <option value="note">note</option>
+        <option value="brief">brief</option>
+        <option value="challenge">challenge</option>
+        <option value="proposal">proposal</option>
+        <option value="data">data</option>
+      </select>
+      <span class="hint">enter sends, shift+enter newline</span>
+    </div>
+    <div id="typing" class="typing"></div>
+    <textarea id="composer" rows="3"
+      placeholder="say something to the agents"></textarea>
+  </footer>
+
+  <script src="/renderer.js"></script>
+</body>
+</html>
