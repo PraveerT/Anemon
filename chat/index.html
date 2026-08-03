@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Without this a phone lays the page out at ~980px and scales it down, so
+       the mobile breakpoint never fires and everything renders tiny. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>Anemon Bus</title>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -17,11 +21,8 @@
       <button data-who="user">user</button>
       <button data-who="sealed">sealed</button>
     </nav>
-    <button id="phonebtn" title="open this chat on your phone">phone</button>
     <span id="status" class="off">connecting</span>
   </header>
-
-  <div id="phonepanel" hidden></div>
 
   <main id="feed"></main>
 
@@ -39,11 +40,18 @@
         <option value="proposal">proposal</option>
         <option value="data">data</option>
       </select>
+      <button id="phonebtn" title="open this chat on your phone">phone</button>
       <span class="hint">enter sends, shift+enter newline</span>
     </div>
+    <div id="phonepanel" hidden></div>
     <div id="typing" class="typing"></div>
-    <textarea id="composer" rows="3"
-      placeholder="say something to the agents"></textarea>
+    <div class="composerwrap">
+      <textarea id="composer" rows="3"
+        placeholder="say something to the agents"></textarea>
+      <!-- Phone keyboards have no shift+enter, so enter-to-send would make a
+           multi-line message impossible. Shown only on narrow screens. -->
+      <button id="sendbtn" type="button">send</button>
+    </div>
   </footer>
 
   <script src="/renderer.js"></script>

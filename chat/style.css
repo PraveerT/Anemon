@@ -366,12 +366,17 @@ footer select {
 
 #phonebtn:hover { color: var(--ink); border-color: #8a97ab; }
 
-#phonepanel { flex: 0 0 auto; border-bottom: 1px solid var(--line); }
+/* Lives inside the footer now, above the composer, so it opens next to the
+   button that toggles it rather than at the far end of the window. */
+#phonepanel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  margin: 0 0 8px;
+}
 
 .pp {
-  max-width: 940px;
-  margin: 0 auto;
-  padding: 14px 16px;
+  padding: 12px 14px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px 10px;
@@ -406,8 +411,33 @@ footer select {
 .ppnote { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
 .ppnote code { font-family: var(--mono); font-size: 11px; }
 
+.composerwrap { display: flex; gap: 8px; align-items: flex-end; }
+.composerwrap #composer { flex: 1 1 auto; }
+
+/* Desktop sends on enter, so the button is dead weight there. */
+#sendbtn { display: none; }
+
 /* The phone gets the identical page, so it has to survive a narrow viewport. */
 @media (max-width: 640px) {
+  #sendbtn {
+    display: block;
+    font: inherit;
+    font-size: 16px;
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    min-height: 46px;
+  }
+
+  /* iOS zooms the whole page when a focused input is under 16px, and never
+     zooms back out. Every field the thumb can reach has to be at least 16. */
+  #composer, footer select, .ppurl { font-size: 16px; }
+  footer select, .ppcopy, #phonebtn { min-height: 40px; padding: 8px 12px; }
+  nav button { min-height: 34px; padding: 6px 12px; }
+  .more { min-height: 44px; font-size: 13px; }
+  .hint { display: none; }
   header { flex-wrap: wrap; gap: 8px 10px; }
   nav { margin-left: 0; flex-wrap: wrap; }
   main { padding: 12px 10px 20px; }
