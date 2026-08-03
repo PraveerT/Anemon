@@ -585,7 +585,12 @@ const server = http.createServer((req, res) => {
 // says it does not know, rather than showing the last state as current.
 function mirrorPresence() {
   if (!MIRROR || !MIRROR_TOKEN) return;
-  const body = Buffer.from(JSON.stringify(presence()));
+  // Cursors ride along with presence: read receipts are derived from them, and
+  // they change on exactly the same events, so a second channel would only add
+  // a way for the two to disagree about who has read what.
+  const body = Buffer.from(JSON.stringify({
+    presence: presence(), cursors, agents: AGENTS,
+  }));
   const req = transport().request(
     `${MIRROR}/api/chat-presence`,
     { method: 'POST',
