@@ -553,10 +553,47 @@ function mirrorCatchUp() {
   }).on('error', (e) => console.log('mirror catch-up failed:', e.message));
 }
 
+// Pull side of the mirror. The hosted page cannot append to the real log, so it
+// queues into an outbox and this drains it. Messages enter here exactly as if
+// typed locally: append() assigns the seq, and mirrorPush sends them straight
+// back out, so the phone sees its own message with the number the desk gave it.
+function drainOutbox() {
+  if (!MIRROR || !MIRROR_TOKEN) return;
+  const req = transport().get(
+    `${MIRROR}/api/chat-send`,
+    { headers: { authorization: `Bearer ${MIRROR_TOKEN}` }, timeout: 8000 },
+    (res) => {
+      let buf = '';
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => {
+        let out = [];
+        try { out = JSON.parse(buf).messages || []; } catch { return; }
+        for (const m of out) {
+          if (!m || !String(m.body || '').trim()) continue;
+          const saved = append({
+            from: 'user',
+            to: m.to || 'all',
+            kind: m.kind || 'note',
+            re: null, title: null, expects: null,
+            summary: null,
+            body: String(m.body),
+          });
+          broadcast('message', redact(saved, null));
+          console.log(`outbox -> #${saved.seq} from phone`);
+        }
+      });
+    });
+  req.on('error', () => {});
+  req.on('timeout', () => req.destroy());
+}
+
 function start() {
   return new Promise((resolve) => {
     server.listen(PORT, HOST, () => {
       mirrorCatchUp();
+      // 4s, so a message typed on the phone lands about as fast as the hosted
+      // page's own 5s poll would show it anyway.
+      if (MIRROR && MIRROR_TOKEN) setInterval(drainOutbox, 4000);
       console.log(`bus on http://127.0.0.1:${PORT}  (${messages.length} messages)`);
       resolve(`http://127.0.0.1:${PORT}`);
     });
