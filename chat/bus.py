@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -32,7 +33,7 @@ BASE = os.environ.get("BUS_URL", "http://127.0.0.1:8787")
 AGENTS = ("claude", "deepseek", "opus", "sonnet")
 
 
-def call(method, path, payload=None, timeout=15):
+def call(method, path, payload=None, timeout=15, retry_ok=False):
     req = urllib.request.Request(
         BASE + path, method=method,
         data=json.dumps(payload).encode() if payload is not None else None,
@@ -43,8 +44,17 @@ def call(method, path, payload=None, timeout=15):
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
     except urllib.error.URLError as e:
+        # Callers that can survive an outage ask for it. A parked wait must,
+        # because the Electron app restarts often and a reset would otherwise
+        # kill the park silently: the agent stays running and stops listening.
+        if retry_ok:
+            return None, {"unreachable": str(e.reason)}
         sys.exit("bus unreachable at %s (%s). Is the Electron app running?"
                  % (BASE, e.reason))
+    except (ConnectionResetError, TimeoutError, OSError) as e:
+        if retry_ok:
+            return None, {"unreachable": str(e)}
+        sys.exit("bus connection failed: %s" % e)
 
 
 def whoami(args):
@@ -127,8 +137,18 @@ def cmd_wait(args):
     server holds the connection open and answers the moment traffic lands.
     """
     who = whoami(args)
-    _, r = call("GET", "/api/wait?agent=%s&timeout=%d" % (who, args.timeout),
-                timeout=args.timeout + 15)
+    # Self-healing: ride out a restart rather than dying on it. Bounded, so a
+    # genuinely dead bus still reports instead of spinning forever.
+    for attempt in range(20):
+        _, r = call("GET", "/api/wait?agent=%s&timeout=%d" % (who, args.timeout),
+                    timeout=args.timeout + 15, retry_ok=True)
+        if not r.get("unreachable"):
+            break
+        if attempt == 0:
+            print("bus unreachable, reconnecting...", file=sys.stderr)
+        time.sleep(5)
+    else:
+        sys.exit("bus still unreachable after 20 attempts")
     if r.get("superseded"):
         # Another wait took over. Do NOT drain, that would race the shared
         # cursor. Do NOT treat this as fatal either: two loops that both exit on
