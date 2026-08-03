@@ -137,12 +137,39 @@ function summarise(s) {
   return t ? t.slice(0, SUMMARY_MAX) : null;
 }
 
+// Same shape as the GPU box's sidepanel publisher: the source of truth pushes
+// to the hosted instance, the hosted instance holds no independent state. That
+// beats making the agents talk to Railway directly, because the local bus keeps
+// working when the network is down and catches up afterwards.
+const MIRROR = (process.env.BUS_MIRROR || '').replace(/\/+$/, '');
+
+// Railway is https, but a mirror on the LAN would be http and hardcoding one
+// fails with an unhelpful parse error rather than a connection error.
+const transport = () =>
+  require(MIRROR.startsWith('http://') ? 'node:http' : 'node:https');
+
+function mirrorPush(m) {
+  if (!MIRROR) return;
+  const body = Buffer.from(JSON.stringify(m));
+  const headers = { 'content-type': 'application/json',
+                    'content-length': body.length };
+  if (TOKEN) headers['x-bus-token'] = TOKEN;
+  const req = require('node:https').request(
+    `${MIRROR}/api/mirror`, { method: 'POST', headers, timeout: 8000 },
+    (res) => { res.resume(); });
+  // Never let a mirror failure touch the local bus. It catches up on restart.
+  req.on('error', (e) => console.log('mirror push failed:', e.message));
+  req.on('timeout', () => req.destroy());
+  req.end(body);
+}
+
 function append(m) {
   m.seq = ++seq;
   m.ts = Date.now();
   messages.push(m);
   fs.appendFileSync(LOG, JSON.stringify(m) + '\n');
   events.emit('message', redact(m, null));
+  mirrorPush(m);
   return m;
 }
 
@@ -447,6 +474,27 @@ async function handle(req, res) {
     return;
   }
 
+  // Receive a mirrored message from the source-of-truth bus. Verbatim: seq and
+  // ts are preserved, so the hosted copy and the local one agree on ids and a
+  // reply that says "re #137" means the same thing on a phone as on the desk.
+  // Idempotent, because catch-up after a restart will resend.
+  if (req.method === 'POST' && p === '/api/mirror') {
+    const m = await body(req);
+    if (!m || typeof m.seq !== 'number' || !m.from) {
+      return json(res, 400, { error: 'need a full message record with seq' });
+    }
+    if (messages.some((x) => x.seq === m.seq)) {
+      return json(res, 200, { ok: true, duplicate: true, seq: m.seq });
+    }
+    messages.push(m);
+    messages.sort((a, b) => a.seq - b.seq);
+    seq = Math.max(seq, m.seq);
+    fs.appendFileSync(LOG, JSON.stringify(m) + '\n');
+    events.emit('message', redact(m, null));
+    broadcast('message', redact(m, null));
+    return json(res, 200, { ok: true, seq: m.seq });
+  }
+
   json(res, 404, { error: 'no route' });
 }
 
@@ -454,9 +502,31 @@ const server = http.createServer((req, res) => {
   handle(req, res).catch((e) => json(res, 500, { error: String(e.message) }));
 });
 
+// A push that failed while the network was down would otherwise leave a
+// permanent hole, since append() only ever fires once per message. On startup,
+// ask the mirror how far it got and resend everything after that.
+function mirrorCatchUp() {
+  if (!MIRROR) return;
+  const url = `${MIRROR}/api/state?since=999999999`;
+  const opts = TOKEN ? { headers: { 'x-bus-token': TOKEN } } : {};
+  transport().get(url, opts, (res) => {
+    let buf = '';
+    res.on('data', (c) => { buf += c; });
+    res.on('end', () => {
+      let theirs = 0;
+      try { theirs = JSON.parse(buf).seq || 0; } catch { return; }
+      const behind = messages.filter((m) => m.seq > theirs);
+      if (!behind.length) return;
+      console.log(`mirror is at #${theirs}, pushing ${behind.length} message(s)`);
+      behind.forEach(mirrorPush);
+    });
+  }).on('error', (e) => console.log('mirror catch-up failed:', e.message));
+}
+
 function start() {
   return new Promise((resolve) => {
     server.listen(PORT, HOST, () => {
+      mirrorCatchUp();
       console.log(`bus on http://127.0.0.1:${PORT}  (${messages.length} messages)`);
       resolve(`http://127.0.0.1:${PORT}`);
     });
