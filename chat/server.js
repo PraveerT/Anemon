@@ -149,7 +149,10 @@ const MIRROR_TOKEN = process.env.ANEMON_PUBLISH_TOKEN || '';
 const transport = () =>
   require(MIRROR.startsWith('http://') ? 'node:http' : 'node:https');
 
-function mirrorPush(m) {
+// Accepts one message or an array. Catch-up MUST batch: the receiving endpoint
+// does read-merge-rewrite, so N concurrent single-message POSTs lose updates to
+// each other. A 200-message catch-up landed 3 before this was batched.
+function mirrorPush(m, done) {
   if (!MIRROR) return;
   const body = Buffer.from(JSON.stringify(m));
   const headers = { 'content-type': 'application/json',
@@ -157,9 +160,12 @@ function mirrorPush(m) {
   if (MIRROR_TOKEN) headers['authorization'] = `Bearer ${MIRROR_TOKEN}`;
   const req = transport().request(
     `${MIRROR}/api/chat-publish`, { method: 'POST', headers, timeout: 8000 },
-    (res) => { res.resume(); });
+    (res) => { res.resume(); res.on('end', () => { if (done) done(); }); });
   // Never let a mirror failure touch the local bus. It catches up on restart.
-  req.on('error', (e) => console.log('mirror push failed:', e.message));
+  req.on('error', (e) => {
+    console.log('mirror push failed:', e.message);
+    if (done) done();
+  });
   req.on('timeout', () => req.destroy());
   req.end(body);
 }
@@ -522,12 +528,27 @@ function mirrorCatchUp() {
     let buf = '';
     res.on('data', (c) => { buf += c; });
     res.on('end', () => {
-      let theirs = 0;
-      try { theirs = JSON.parse(buf).maxSeq || 0; } catch { return; }
-      const behind = messages.filter((m) => m.seq > theirs);
+      let head = { count: 0, maxSeq: 0 };
+      try { head = JSON.parse(buf); } catch { return; }
+
+      // Resend EVERYTHING rather than only what is above their maxSeq. The
+      // hosted store can lose its middle (a dropped write, or /tmp cleared on
+      // redeploy) and still report a high maxSeq, in which case "newer than
+      // maxSeq" resends almost nothing and the gap is permanent. Observed:
+      // maxSeq 198 with 3 messages stored. Writes merge by seq, so resending
+      // is idempotent and costs a handful of chunked requests.
+      const behind = messages.slice();
       if (!behind.length) return;
-      console.log(`mirror is at #${theirs}, pushing ${behind.length} message(s)`);
-      behind.forEach(mirrorPush);
+      console.log(`mirror has ${head.count} to #${head.maxSeq}, `
+        + `resending all ${behind.length}`);
+      // Chunked, and sequentially: parallel chunks would race exactly as the
+      // per-message pushes did. 50 keeps each body well inside any body limit.
+      const chunks = [];
+      for (let i = 0; i < behind.length; i += 50) chunks.push(behind.slice(i, i + 50));
+      (function next() {
+        const c = chunks.shift();
+        if (c) mirrorPush(c, next);
+      })();
     });
   }).on('error', (e) => console.log('mirror catch-up failed:', e.message));
 }

@@ -15,3 +15,9 @@ htmlcov/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# chat app
+chat/node_modules/
+chat/data/token.txt
+
+chat/data/publisher.env
