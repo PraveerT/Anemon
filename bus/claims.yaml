@@ -1,0 +1,88 @@
+# The ledger. Positions, not conversation.
+#
+# status:  open | confirmed | refuted | underdetermined
+# verdict fields hold each agent's current position and the message id that set
+# it. `kill_condition` is mandatory: the observation that would refute the claim.
+# A claim without one is not a claim.
+#
+# Whoever writes a verdict updates the entry in the same turn.
+
+- id: C001
+  claim: >
+    Angle shrinkage pays on quaternion-structured features and is noise on
+    arbitrary channel groups.
+  status: open
+  evidence:
+    - "QuatLinear features: +2.84 +- 1.63 over 8 paired seeds, 7/8 positive"
+    - "ordinary channels, group sweep 2 seeds: gelu 83.10, g2 80.29, g4 82.68, g8 82.47, g16 82.99"
+    - "seed spread grows with group size: 0.21 0.42 2.69 2.70 4.15"
+  kill_condition: >
+    g4_perm (slot positions permuted inside each group) matches g4 within noise,
+    or g4_stride (channels grouped 4 apart) matches g4. Either would show the
+    grouping carries no quaternion meaning.
+  claude: {position: probable, msg: null}
+  deepseek: {position: null, msg: null}
+
+- id: C002
+  claim: >
+    ladder_Q1 reaching B6T accuracy at 47.5 percent of the parameters is
+    evidence for quaternion parameter efficiency.
+  status: open
+  evidence:
+    - "ladder_Q1 1.4204M best 90.66"
+    - "ladder_B6T 2.9922M best 90.46, last-10 89.32 +- 0.83"
+  kill_condition: >
+    A parameter-matched non-quaternion model at ~1.42M reaching the same
+    accuracy. This control has never been run. Prior record on this dataset: a
+    lean 1.06M model beat a 3.21M one by about 1 point, which is the reason to
+    expect the claim fails.
+  claude: {position: doubtful, msg: null}
+  deepseek: {position: null, msg: null}
+
+- id: C003
+  claim: >
+    Quaternion structure buys exact invariance to a shared right frame, which is
+    worth a large positive when that frame is nuisance and a large negative when
+    it carries the label.
+  status: confirmed
+  evidence:
+    - "-9.75 when the shared frame carries the label"
+    - "+31.72 when it carries nuisance"
+    - "under injected nuisance: components 62.78 -> 19.71, quaternion comparison loses 1.60"
+    - "synthetic capability proof 49.25 vs control at chance 16.67"
+  kill_condition: >
+    A non-quaternion architecture achieving the same +31.72 under injected
+    nuisance without being given the invariance by construction.
+  claude: {position: confirmed, msg: null}
+  deepseek: {position: null, msg: null}
+
+- id: C004
+  claim: >
+    Temporal augmentation on this dataset is roughly 4x too strong, and quarter
+    strength is near optimal.
+  status: open
+  evidence:
+    - "fast rig, 2 seeds: off 82.16, x0.25 84.44, x1.0 83.10"
+    - "correcting the frame-blending to operate along T trains 2.01 worse"
+    - "frame permutation alone costs 18.07 points"
+  kill_condition: >
+    x0.25 fails to beat x1.0 in the full rig. Augmentation optima are known to
+    move with model capacity and the sweep was run on a much smaller network.
+  claude: {position: probable-in-fast-rig, msg: null}
+  deepseek: {position: null, msg: null}
+
+- id: C005
+  claim: >
+    The quaternion relative-rotation term R = a (x) conj(b) does not improve
+    NVGesture accuracy under any operand pair.
+  status: confirmed
+  evidence:
+    - "9 operand pairs, all null against their own shuffled-pairing controls"
+    - "deleting the term changed 1 prediction in 482 and improved accuracy 0.21"
+    - "scale-matched noise reproduced trained accuracy exactly, 83.40 both"
+    - "Hamilton as learnable bilinear: random init 55.33 vs Hamilton init 56.87, 16 unconstrained outputs 58.82"
+  kill_condition: >
+    An operand pair that beats its own shuffled control by more than 2x the
+    between-seed sd across at least 3 paired seeds.
+  claude: {position: confirmed, msg: null}
+  deepseek: {position: null, msg: null}
