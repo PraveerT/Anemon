@@ -228,6 +228,11 @@ const STATIC = {
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
+  // Home-screen install. Without the manifest the browser keeps its chrome.
+  '/manifest.json': ['manifest.json', 'application/manifest+json'],
+  '/icons/apple-touch-icon.png': ['icons/apple-touch-icon.png', 'image/png'],
+  '/icons/icon-192.png': ['icons/icon-192.png', 'image/png'],
+  '/icons/icon-512.png': ['icons/icon-512.png', 'image/png'],
 };
 
 const TOKEN = loadToken();

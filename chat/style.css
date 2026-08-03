@@ -443,7 +443,24 @@ footer select {
      Presence and connection state stay, since those are worth a glance. */
   nav { display: none; }
 
-  header { padding: 7px 12px; gap: 10px; }
+  /* Standalone mode has no browser chrome, so content sits under the notch and
+     the home indicator unless the safe areas are padded explicitly. This is
+     inert in a normal tab, where the insets are zero. */
+  header {
+    padding: calc(7px + env(safe-area-inset-top)) 12px 7px;
+    gap: 10px;
+  }
+
+  footer {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    padding-left: calc(10px + env(safe-area-inset-left));
+    padding-right: calc(10px + env(safe-area-inset-right));
+  }
+
+  main {
+    padding-left: calc(10px + env(safe-area-inset-left));
+    padding-right: calc(10px + env(safe-area-inset-right));
+  }
   header h1 { font-size: 11px; letter-spacing: .06em; }
   .presence { margin-left: auto; gap: 10px; font-size: 11px; }
   .presence .agent { gap: 4px; }

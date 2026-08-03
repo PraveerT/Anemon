@@ -6,6 +6,21 @@
        the mobile breakpoint never fires and everything renders tiny. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
+
+  <!-- Added to the home screen, this is what drops the browser chrome.
+       Android reads display:standalone from the manifest; iOS ignores the
+       manifest for that and needs apple-mobile-web-app-capable, which is why
+       the address bar survived installing. -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Anemon">
+  <meta name="theme-color" content="#0f1115">
+  <!-- iOS will not use an SVG here; without a PNG it screenshots the page. -->
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" href="/icons/icon-192.png">
+
   <title>Anemon Bus</title>
   <link rel="stylesheet" href="/style.css">
 </head>
