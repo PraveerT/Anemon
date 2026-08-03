@@ -579,6 +579,26 @@ const server = http.createServer((req, res) => {
 // A push that failed while the network was down would otherwise leave a
 // permanent hole, since append() only ever fires once per message. On startup,
 // ask the mirror how far it got and resend everything after that.
+// Presence cannot be mirrored the way messages are. A message is a fact that
+// stays true; presence is only true at the instant it is read, so it is pushed
+// on a heartbeat and the hosted side expires it. If this stops, the hosted page
+// says it does not know, rather than showing the last state as current.
+function mirrorPresence() {
+  if (!MIRROR || !MIRROR_TOKEN) return;
+  const body = Buffer.from(JSON.stringify(presence()));
+  const req = transport().request(
+    `${MIRROR}/api/chat-presence`,
+    { method: 'POST',
+      headers: { 'content-type': 'application/json',
+                 'content-length': body.length,
+                 authorization: `Bearer ${MIRROR_TOKEN}` },
+      timeout: 8000 },
+    (res) => { res.resume(); });
+  req.on('error', () => {});
+  req.on('timeout', () => req.destroy());
+  req.end(body);
+}
+
 function mirrorCatchUp() {
   if (!MIRROR) return;
   const url = `${MIRROR}/api/chat-publish`;
@@ -654,6 +674,12 @@ function start() {
       // 4s, so a message typed on the phone lands about as fast as the hosted
       // page's own 5s poll would show it anyway.
       if (MIRROR && MIRROR_TOKEN) setInterval(drainOutbox, 4000);
+      // 30s against a 90s staleness window on the hosted side, so two missed
+      // pushes still read as live and a genuine stop is caught quickly.
+      if (MIRROR && MIRROR_TOKEN) {
+        mirrorPresence();
+        setInterval(mirrorPresence, 30000);
+      }
       console.log(`bus on http://127.0.0.1:${PORT}  (${messages.length} messages)`);
       resolve(`http://127.0.0.1:${PORT}`);
     });
