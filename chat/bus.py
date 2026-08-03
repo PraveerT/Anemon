@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 
 BASE = os.environ.get("BUS_URL", "http://127.0.0.1:8787")
-AGENTS = ("claude", "deepseek", "opus")
+AGENTS = ("claude", "deepseek", "opus", "sonnet")
 
 
 def call(method, path, payload=None, timeout=15):
@@ -178,8 +178,11 @@ def cmd_send(args):
 def cmd_seal(args):
     who = whoami(args)
     summary = read_summary(args)
+    parts = [a.strip() for a in (args.__dict__.get("with_") or "").split(",")
+             if a.strip()]
     code, r = call("POST", "/api/seal", {
         "from": who, "sealId": args.id, "re": args.re, "summary": summary,
+        "to": args.to, "participants": parts,
         "body": read_body(args)})
     if code != 200:
         sys.exit("seal failed: %s" % r.get("error"))
@@ -254,6 +257,13 @@ def main():
 
     z = sub.add_parser("seal", help="blind submission")
     z.add_argument("--id", required=True, help="seal id, e.g. 0001")
+    # Quorum is per-seal. Default is you plus --to; --to all opts into every
+    # agent. Without this a new agent joining silently raised the bar on every
+    # seal, and an incomplete seal never errors, it just never opens.
+    z.add_argument("--to", default="all",
+                   help="the other participant, or 'all' for full quorum")
+    z.add_argument("--with", dest="with_", default="",
+                   help="explicit participants, comma separated")
     z.add_argument("--re", type=int)
     body_args(z)
     z.set_defaults(fn=cmd_seal)

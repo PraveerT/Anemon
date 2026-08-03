@@ -18,7 +18,7 @@ const DATA = process.env.BUS_DATA
 const LOG = path.join(DATA, 'messages.jsonl');
 const CURSORS = path.join(DATA, 'cursors.json');
 
-const AGENTS = ['claude', 'deepseek', 'opus'];
+const AGENTS = ['claude', 'deepseek', 'opus', 'sonnet'];
 const KINDS = ['brief', 'challenge', 'verdict', 'predict', 'data', 'proposal',
                'note', 'sealed'];
 // PORT is what Railway and most hosts inject; BUS_PORT is the local override.
@@ -185,18 +185,32 @@ function append(m) {
 // same sealId. That is the anchoring guard: whoever answers second must not be
 // able to read the first answer. The server enforces it, not the agents.
 
+// Who a given seal is waiting for. Taken from the FIRST submission, so a later
+// half cannot quietly widen or narrow the quorum after the fact.
+//
+// Without this the quorum was AGENTS.every, so every new agent added to the bus
+// silently raised the bar on every seal, and a seal that never completes throws
+// no error: it just sits at "waiting on X" forever. The failure is invisible,
+// which is fatal for the one mechanism whose whole job is to be trusted.
+function sealParticipants(sealId) {
+  const subs = messages.filter((m) => m.kind === 'sealed' && m.sealId === sealId);
+  const declared = subs.find((m) => Array.isArray(m.participants)
+                                    && m.participants.length);
+  return declared ? declared.participants : AGENTS;
+}
+
 function sealComplete(sealId) {
   const have = new Set(messages
     .filter((m) => m.kind === 'sealed' && m.sealId === sealId)
     .map((m) => m.from));
-  return AGENTS.every((a) => have.has(a));
+  return sealParticipants(sealId).every((a) => have.has(a));
 }
 
 function sealMissing(sealId) {
   const have = new Set(messages
     .filter((m) => m.kind === 'sealed' && m.sealId === sealId)
     .map((m) => m.from));
-  return AGENTS.filter((a) => !have.has(a));
+  return sealParticipants(sealId).filter((a) => !have.has(a));
 }
 
 function redact(m, viewer) {
@@ -390,8 +404,17 @@ async function handle(req, res) {
         error: `${b.from} already sealed ${b.sealId} at seq ${dup.seq}`,
       });
     }
+    // Default: the sender plus whoever `to` names. `to: all` opts into the
+    // full quorum. Explicit `participants` wins over both.
+    let parts = Array.isArray(b.participants) && b.participants.length
+      ? b.participants.filter((a) => AGENTS.includes(a))
+      : (b.to && b.to !== 'all' && AGENTS.includes(b.to)
+        ? [b.from, b.to] : AGENTS.slice());
+    if (!parts.includes(b.from)) parts = [b.from, ...parts];
+
     const m = append({
-      from: b.from, to: 'all', kind: 'sealed', sealId: String(b.sealId),
+      from: b.from, to: b.to || 'all', kind: 'sealed', sealId: String(b.sealId),
+      participants: [...new Set(parts)],
       re: b.re == null ? null : Number(b.re),
       title: b.title || null, expects: null,
       summary: summarise(b.summary),
