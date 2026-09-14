@@ -13,13 +13,14 @@ from jlab.models import ContentItem, ContentType, KernelInfo, ServerStatus, Sess
 
 
 class JupyterClient:
-    def __init__(self, config: JlabConfig):
+    def __init__(self, config: JlabConfig, request_timeout: float | None = None):
         self.config = config
+        self.request_timeout = request_timeout
         self._session = requests.Session()
         self._session.headers.update(config.auth_headers)
         # Fetch cookies (including _xsrf) from the server
         try:
-            self._session.get(config.url, verify=False)
+            self._session.get(config.url, verify=False, timeout=request_timeout)
         except Exception:
             pass
 
@@ -29,6 +30,8 @@ class JupyterClient:
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         url = f"{self.config.api_url}/{path.lstrip('/')}"
+        if self.request_timeout is not None:
+            kwargs.setdefault("timeout", self.request_timeout)
         try:
             resp = self._session.request(method, url, **kwargs)
         except requests.ConnectionError:

@@ -19,7 +19,7 @@ class KernelConnection:
         self.session_id = str(uuid.uuid4())
         self._ws: websocket.WebSocket | None = None
 
-    def connect(self) -> None:
+    def connect(self, timeout: float = 30) -> None:
         url = (
             f"{self.config.ws_url}/kernels/{self.kernel_id}/channels"
             f"?token={self.config.token}"
@@ -31,7 +31,7 @@ class KernelConnection:
             url,
             header=self.config.auth_headers,
             sslopt=sslopt,
-            timeout=30,
+            timeout=timeout,
         )
 
     def close(self) -> None:
@@ -75,6 +75,7 @@ class KernelConnection:
         self._ws.send(json.dumps(msg))
 
         result = ExecutionResult(status="ok")
+        reply_received = idle_received = False
         deadline = time.time() + timeout
 
         while time.time() < deadline:
@@ -128,14 +129,20 @@ class KernelConnection:
                     result.error_value = content["evalue"]
                     result.traceback = content.get("traceback", [])
                 case "execute_reply":
+                    reply_received = True
                     result.status = content["status"]
                     if content["status"] == "error":
                         result.error_name = content.get("ename", "")
                         result.error_value = content.get("evalue", "")
                         result.traceback = content.get("traceback", [])
-                    return result
                 case "status":
-                    pass
+                    if content.get("execution_state") == "idle":
+                        idle_received = True
+
+            # Shell replies and IOPub output travel on different channels.
+            # Only the matching idle status marks normal output as drained.
+            if reply_received and idle_received:
+                return result
 
         raise KernelError("Execution timed out")
 
@@ -149,6 +156,7 @@ class KernelConnection:
         self._ws.send(json.dumps(msg))
 
         result = ExecutionResult(status="ok")
+        reply_received = idle_received = False
         deadline = time.time() + timeout
 
         while time.time() < deadline:
@@ -215,14 +223,18 @@ class KernelConnection:
                     result.error_value = content["evalue"]
                     result.traceback = content.get("traceback", [])
                 case "execute_reply":
+                    reply_received = True
                     result.status = content["status"]
                     if content["status"] == "error":
                         result.error_name = content.get("ename", "")
                         result.error_value = content.get("evalue", "")
                         result.traceback = content.get("traceback", [])
-                    return result
                 case "status":
-                    pass
+                    if content.get("execution_state") == "idle":
+                        idle_received = True
+
+            if reply_received and idle_received:
+                return result
 
         raise KernelError("Execution timed out")
 

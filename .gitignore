@@ -21,3 +21,12 @@ chat/node_modules/
 chat/data/token.txt
 
 chat/data/publisher.env
+
+# Local runtime state and experiment scratch files
+chat/data/
+tmp/
+*.log
+*.err
+.env
+.env.*
+!.env.example

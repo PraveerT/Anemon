@@ -15,6 +15,7 @@ from jlab.display import DisplayFormatter
 from jlab.exceptions import JlabError
 from jlab.kernel import KernelConnection
 from jlab.notebook import run_notebook
+from jlab.qwen_chat import qwen
 from jlab.terminal import TerminalConnection, _get_browser_cookies_and_headers
 
 display = DisplayFormatter()
@@ -79,6 +80,9 @@ def main():
     pass
 
 
+main.add_command(qwen)
+
+
 @main.command()
 @click.argument("url")
 @click.option("--token", "-t", default="", help="JupyterLab authentication token")
@@ -99,6 +103,17 @@ def connect(url: str, token: str, kernel: str):
 @handle_errors
 def setup(key: str | None):
     """Auto-connect and start a session.
+
+    This is the default initialization and recovery workflow for Paperspace
+    JupyterLab. If `jlab session start`, `jlab status`, or kernels/status routes
+    return HTTP 503, Not Found, missing endpoints, or report that no notebook is
+    running, do not repeatedly retry session commands. Run `jlab setup`: it
+    starts or reconnects the Paperspace notebook, refreshes the endpoint and
+    configuration, waits until the notebook is ready, and creates a session.
+
+    Then run `jlab session cd /notebooks/Manta` (or the intended project
+    directory) and verify with `jlab session status`. Session retries alone
+    cannot recover a stopped notebook or a stale or missing endpoint.
 
     Uses saved Paperspace API key to find the running notebook, get its
     URL and token, connect, and start a persistent kernel session.

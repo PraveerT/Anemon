@@ -1,85 +1,53 @@
-# jlab
+# Anemon JupyterLab CLI
 
-A CLI tool to interact with remote JupyterLab instances from your terminal. Connect to any JupyterLab server and get a full remote shell, run code, manage files, and execute notebooks -- all without opening a browser.
+Anemon's existing `jlab` commands continue to work unchanged. The `qwen` group adds a durable terminal chat whose model and inference process run on the remote Paperspace GPU while prompts and replies travel through the existing authenticated JupyterLab kernel connection.
 
-![jlab shell in action](Capture.JPG)
+## Qwen remote chat
 
-## Installation
+The configured default is `cyankiwi/Qwen3.8-27B-AWQ-INT4`, an open 4-bit
+quantization of the official `Qwen/Qwen3.8-27B`. The requested official model
+does exist, but its 55.6 GB BF16 snapshot is larger than the RTX A6000's 48 GB
+VRAM, and runtime quantization is not stable within this notebook's 44 GB system
+RAM. The configured AWQ snapshot is about 21 GB and runs the same 27B-class
+Qwen3.8 architecture with FP16 compute. The model ID remains explicit and
+overridable.
 
-```bash
-git clone https://github.com/PraveerT/Anemon.git
-cd Anemon
-pip install -e .
+The live A6000 host exposes a CUDA 12.4-capable NVIDIA 550.144.03 driver. vLLM 0.28 currently requires a Torch/CUDA 13 stack that is not compatible with that driver, and FP8 is not a suitable A6000 path. The remote service instead uses an isolated persistent virtual environment with PyTorch 2.6.0 CUDA 12.4 wheels, Transformers 5.15.x, Accelerate, bitsandbytes, and compressed-tensors. Nothing is installed into the remote global Python environment. The inference HTTP listener binds only to `127.0.0.1` on the remote host; it is never exposed publicly.
+
+Provision once:
+
+```text
+jlab qwen setup
 ```
 
-## Quick Start
+The first run downloads roughly 21 GB and installs a separate Torch environment, so it can take several minutes or longer depending on the notebook and network. Setup is idempotent: completed dependencies and model snapshots are reused. To select another compatible repository or change context length:
 
-```bash
-# Connect to your JupyterLab server
-jlab connect https://your-server.com --token YOUR_TOKEN
-
-# Open a remote shell
-jlab shell
+```text
+jlab qwen setup --model cyankiwi/Qwen3.8-27B-AWQ-INT4 --max-model-len 16384
 ```
 
-## Commands
+Send one prompt or start an interactive loop:
 
-| Command | Description |
-|---------|-------------|
-| `jlab connect <url> --token <t>` | Save connection to a JupyterLab server |
-| `jlab setup --key <key>` | Connect to the configured Paperspace notebook |
-| `jlab start` / `jlab stop` | Start or stop the configured Paperspace notebook |
-| `jlab shell` | Remote shell with tab completion and streaming output |
-| `jlab exec "<command>"` | Execute a shell command remotely |
-| `jlab session start` | Start a persistent remote kernel session |
-| `jlab status` | Show server status |
-| `jlab ls [path]` | List remote files and directories |
-| `jlab cat <path>` | View file contents with syntax highlighting |
-| `jlab upload <local> <remote>` | Upload a file to the server |
-| `jlab write <remote> [-c <text>]` | Write text directly to a remote file (content from `-c` or stdin) |
-| `jlab download <remote> [local]` | Download a file from the server |
-| `jlab rm <path>` | Delete a remote file |
-| `jlab kernels` | List running kernels |
-| `jlab run "<code>"` | Execute code on a remote kernel (one-shot) |
-| `jlab repl` | Interactive Python REPL on a remote kernel |
-| `jlab nb run <notebook>` | Run all cells of a remote notebook |
-
-The Paperspace start helper requests the `Free-A6000` machine type with a
-six-hour auto-shutdown timeout.
-
-## Remote Shell
-
-`jlab shell` gives you a terminal on the remote machine, similar to SSH:
-
-- Real-time streaming output (line-by-line, not buffered)
-- Tab completion for files and directories on the remote server
-- `cd` to navigate the remote filesystem
-- `clear` to clear your terminal
-- Colored prompt showing remote working directory
-- Ctrl+D or `exit` to disconnect
-
-```
-remote:/notebooks$ ls
-project  shared-data
-remote:/notebooks$ cd project
-remote:/notebooks/project$ python train.py
-Starting training...
+```text
+jlab qwen chat "Explain this algorithm"
+jlab qwen chat --chat research
+jlab qwen chat --chat research --temperature 0.3 --top-p 0.9 --max-tokens 1500
 ```
 
-## How It Works
+Terminal chat uses Qwen's documented non-thinking template so replies contain the
+answer rather than exposing a reasoning preamble. Conversation context is still
+preserved through the durable transcript.
 
-jlab connects to JupyterLab's REST API and WebSocket kernel protocol:
+`--chat` names a durable conversation. Every request carries the complete stored transcript, and a turn is saved only after a full assistant response succeeds. This lets a conversation continue after the bridge kernel or the approximately six-hour Paperspace notebook lease ends.
 
-- **File operations** use the `/api/contents/` REST endpoints
-- **Code execution** uses WebSocket connections to `/api/kernels/{id}/channels` with the Jupyter messaging protocol
-- **Remote shell** runs commands via `subprocess.Popen` on a Python kernel, streaming output back over WebSocket in real-time
-- **Tab completion** queries the remote filesystem through the kernel
-- **Config** is stored in `~/.jlab/config.json`
+On the first prompt after a shutdown, Anemon checks the saved Jupyter endpoint, uses the saved Paperspace credential to reconnect to a running notebook or start the stopped notebook, waits for JupyterLab, creates a fresh Qwen-specific bridge kernel, and lazily restarts the local-only inference service. It does not stop or restart an already-running Paperspace notebook. The first reply after a cold start can be slow while the 27B model loads.
 
-## Dependencies
+Inspect configuration/service state and read a transcript without starting inference:
 
-- [click](https://click.palletsprojects.com/) - CLI framework
-- [requests](https://requests.readthedocs.io/) - REST API calls
-- [websocket-client](https://websocket-client.readthedocs.io/) - Kernel WebSocket communication
-- [rich](https://rich.readthedocs.io/) - Terminal formatting
-- [prompt_toolkit](https://python-prompt-toolkit.readthedocs.io/) - Input with tab completion
+```text
+jlab qwen status
+jlab qwen history --chat research
+jlab qwen history --chat research --json
+```
+
+Local Qwen configuration, its dedicated kernel record, and authoritative transcripts live under `~/.jlab/qwen`. This is separate from the normal `~/.jlab/session.json` used by `jlab session`. The persistent remote environment, model/cache, service log, PID, and transcript mirror live under `/notebooks/.anemon-qwen`.
